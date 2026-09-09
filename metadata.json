@@ -1,0 +1,6 @@
+{
+  "name": "Chattoj",
+  "description": "Ultra WhatsApp remix with 100% offline Llama AI, quantum key authentication, and decentralized private communication.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

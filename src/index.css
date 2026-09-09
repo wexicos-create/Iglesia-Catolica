@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #090d0a;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e3324;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #00ff66;
+  }
+}
+
+.glow-green {
+  box-shadow: 0 0 20px rgba(0, 255, 102, 0.25);
+}
+
+.glow-green-sm {
+  box-shadow: 0 0 10px rgba(0, 255, 102, 0.15);
+}
+
+.chattoj-pattern {
+  background-color: #0d1410;
+  background-image: radial-gradient(#16261d 1px, transparent 1px), radial-gradient(#16261d 1px, #0d1410 1px);
+  background-size: 40px 40px;
+  background-position: 0 0, 20px 20px;
+}
+
