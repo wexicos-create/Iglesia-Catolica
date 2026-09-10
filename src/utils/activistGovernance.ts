@@ -15,8 +15,8 @@ export interface PanelBanRecord {
 }
 
 /**
- * Checks if a user is banned from creating more forums/photos.
- * "si se cierran varios foros banea al usuario de crear más fotos"
+ * Checks if a user is banned from creating more forums.
+ * "si se cierran varios foros banea al usuario de crear más foros"
  */
 export function isUserBannedFromCreatingForums(userId: string): boolean {
   try {

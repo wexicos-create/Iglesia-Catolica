@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { UserProfile } from '../types';
+import React, { useState, useEffect } from 'react';
+import { UserProfile, AiTaskSchedule } from '../types';
 import { AdminBadge } from './AdminBadge';
 import { 
   getOrCreateDeviceFingerprint, 
@@ -24,6 +24,14 @@ import {
   setHighRiskProtection 
 } from '../utils/threatProtection';
 import { ADMIN_CONTACT_INFO } from '../utils/llamaEngine';
+import { offlineAudio } from '../utils/audioAlerts';
+import { 
+  getScheduledTasks, 
+  saveScheduledTask, 
+  deleteScheduledTask, 
+  toggleTaskStatus, 
+  executeTaskNow 
+} from '../utils/aiTasksManager';
 import { 
   ArrowLeft, Search, QrCode, Key, Lock, MessageSquare, Bell, 
   Database, Sparkles, Shield, HelpCircle, UserPlus, ChevronRight, 
@@ -31,7 +39,7 @@ import {
   Volume2, HardDrive, Trash2, Copy, Share2, CheckCheck, Moon, 
   Sliders, RefreshCw, LogOut, Info, AlertTriangle, Flame, ShieldAlert,
   Facebook, Instagram, Phone, ExternalLink, Heart, Ban, Bot, UserX,
-  Video, EyeOff, Server, Globe
+  Video, EyeOff, Server, Globe, Clock, Play, Terminal, Cpu, Plus
 } from 'lucide-react';
 import { AdminServerManager } from './AdminServerManager';
 
@@ -40,9 +48,10 @@ interface SettingsViewProps {
   onUpdateProfile: (updated: UserProfile) => void;
   onBack?: () => void;
   onLogout?: () => void;
+  initialSection?: SettingsSection;
 }
 
-type SettingsSection = 
+export type SettingsSection = 
   | 'main' 
   | 'profile' 
   | 'account' 
@@ -51,6 +60,8 @@ type SettingsSection =
   | 'notifications' 
   | 'storage' 
   | 'llama' 
+  | 'tasks'
+  | 'hosting_subdomains'
   | 'hardware' 
   | 'help' 
   | 'qr';
@@ -59,12 +70,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   currentUser,
   onUpdateProfile,
   onBack,
-  onLogout
+  onLogout,
+  initialSection = 'main'
 }) => {
-  const [currentSection, setCurrentSection] = useState<SettingsSection>('main');
+  const [currentSection, setCurrentSection] = useState<SettingsSection>(initialSection);
   const [copiedKey, setCopiedKey] = useState(false);
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [showServerManager, setShowServerManager] = useState(false);
+
+  // Sync initialSection prop if navigated from other tabs
+  useEffect(() => {
+    if (initialSection) {
+      setCurrentSection(initialSection);
+    }
+  }, [initialSection]);
+
+  // Scheduled Tasks Management state in Settings
+  const [tasksList, setTasksList] = useState<AiTaskSchedule[]>(() => getScheduledTasks());
+  const [showNewTaskModal, setShowNewTaskModal] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskTime, setNewTaskTime] = useState('18:00');
+  const [newTaskType, setNewTaskType] = useState<AiTaskSchedule['type']>('message');
+  const [newTaskTarget, setNewTaskTarget] = useState('');
+  const [newTaskPrompt, setNewTaskPrompt] = useState('');
+  const [executingTaskId, setExecutingTaskId] = useState<string | null>(null);
+
+  // Listen for scheduled tasks updates
+  useEffect(() => {
+    const handleTasksUpdate = () => {
+      setTasksList(getScheduledTasks());
+    };
+    window.addEventListener('chattoj-tasks-updated', handleTasksUpdate);
+    return () => window.removeEventListener('chattoj-tasks-updated', handleTasksUpdate);
+  }, []);
 
   // Profile Edit States
   const [editName, setEditName] = useState(currentUser.name);
@@ -578,10 +616,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="p-4 bg-[#090e0b] border-t border-emerald-950/80 space-y-3">
             <div className="flex items-center gap-2 text-emerald-400 font-mono text-xs font-bold">
               <ShieldAlert className="w-4 h-4 text-amber-400" />
-              <span>Foros y Fotos Activistas Bloqueados ({blockedForumsList.length})</span>
+              <span>Foros Comunitarios Bloqueados ({blockedForumsList.length})</span>
             </div>
             <p className="text-xs text-zinc-300">
-              Foros o fotos comunitarias que decidiste ocultar y bloquear de tu bandeja.
+              Foros comunitarios que decidiste ocultar y bloquear de tu bandeja.
             </p>
             {blockedForumsList.length === 0 ? (
               <p className="text-[11px] text-zinc-500 italic">No tienes foros bloqueados.</p>
@@ -904,12 +942,118 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             />
           </div>
 
-          <div className="px-4 py-3.5 flex items-center justify-between hover:bg-emerald-950/20 cursor-pointer">
-            <div>
-              <h4 className="text-sm font-medium text-white">Tono de llamadas</h4>
-              <p className="text-xs text-emerald-400 font-mono">Chattoj Cuántico Sintetizado</p>
+          {/* Device Push Notifications Panel */}
+          <div className="p-4 bg-[#0a120d] border-b border-emerald-950/60 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                <Bell className="w-4 h-4" />
+                <span>Notificaciones Push del Dispositivo</span>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-300 bg-emerald-950 border border-emerald-800 px-2 py-0.5 rounded-full">
+                {typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'No soportado'}
+              </span>
             </div>
-            <ChevronRight className="w-4 h-4 text-zinc-500" />
+            <p className="text-xs text-zinc-400">
+              Permite recibir avisos nativos en la barra de estado de Android cuando la aplicación esté en segundo plano.
+            </p>
+            <button
+              onClick={async () => {
+                const ok = await offlineAudio.sendNativePushNotification(
+                  'Chattoj Seguro',
+                  'Prueba de notificación push y sonido recibida con éxito en tu dispositivo.'
+                );
+                offlineAudio.playReceived();
+                offlineAudio.triggerVibration([100, 50, 100]);
+                if (!ok && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'denied') {
+                  alert('Las notificaciones están bloqueadas en los permisos de tu navegador o sistema.');
+                }
+              }}
+              className="w-full py-2 bg-emerald-950 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <Bell className="w-3.5 h-3.5" />
+              Probar Notificación Push en Dispositivo
+            </button>
+          </div>
+
+          {/* Audio & Ringtone Synthesizer Audition Panel */}
+          <div className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Volume2 className="w-4 h-4 text-emerald-400" />
+                <span>Audición de Tonos y Timbres</span>
+              </h4>
+              <span className="text-[10px] font-mono text-emerald-400">100% Offline / WebAudio</span>
+            </div>
+            
+            <p className="text-xs text-zinc-400">
+              Tonos generados por hardware sin descargar archivos MP3 externos. Operan incluso en modo avión.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                onClick={() => {
+                  offlineAudio.playReceived();
+                  offlineAudio.triggerVibration([80, 40, 80]);
+                }}
+                className="p-2.5 bg-[#0d1410] border border-emerald-900 hover:border-emerald-500 rounded-xl text-left transition-all cursor-pointer"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-white">Mensaje Entrante</span>
+                  <Play className="w-3 h-3 text-emerald-400 fill-emerald-400" />
+                </div>
+                <p className="text-[10px] text-zinc-400 font-mono">Doble campana armónica</p>
+              </button>
+
+              <button
+                onClick={() => {
+                  offlineAudio.playSent();
+                }}
+                className="p-2.5 bg-[#0d1410] border border-emerald-900 hover:border-emerald-500 rounded-xl text-left transition-all cursor-pointer"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-white">Mensaje Saliente</span>
+                  <Play className="w-3 h-3 text-emerald-400 fill-emerald-400" />
+                </div>
+                <p className="text-[10px] text-zinc-400 font-mono">Tick suave de envío</p>
+              </button>
+
+              <button
+                onClick={() => {
+                  offlineAudio.playIncomingCallRingtone();
+                }}
+                className="p-2.5 bg-[#0d1410] border border-emerald-900 hover:border-emerald-500 rounded-xl text-left transition-all cursor-pointer"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-white">Timbre de Voz</span>
+                  <Phone className="w-3 h-3 text-emerald-400" />
+                </div>
+                <p className="text-[10px] text-zinc-400 font-mono">Timbre celular dual + vibración</p>
+              </button>
+
+              <button
+                onClick={() => {
+                  offlineAudio.playIncomingVideoCallRingtone();
+                }}
+                className="p-2.5 bg-[#0d1410] border border-emerald-900 hover:border-emerald-500 rounded-xl text-left transition-all cursor-pointer"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-white">Timbre de Video</span>
+                  <Video className="w-3 h-3 text-emerald-400" />
+                </div>
+                <p className="text-[10px] text-zinc-400 font-mono">Campana arpegio cristalina</p>
+              </button>
+            </div>
+
+            {/* Vibration test */}
+            <button
+              onClick={() => {
+                offlineAudio.triggerVibration([400, 200, 400, 200, 500]);
+              }}
+              className="w-full py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer mt-1"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+              Probar Vibración Háptica del Dispositivo
+            </button>
           </div>
         </div>
       </div>
@@ -1108,6 +1252,409 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <RefreshCw className="w-4 h-4" />
             Limpiar Memoria Caché de Inferencia
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ========================================================================= */
+  /* SUB-VIEW: TAREAS & AUTOMATIZACIONES IA                                    */
+  /* ========================================================================= */
+  if (currentSection === 'tasks') {
+    const pendingCount = tasksList.filter(t => t.status === 'pending').length;
+    const completedCount = tasksList.filter(t => t.status === 'completed').length;
+
+    return (
+      <div className="flex-1 flex flex-col h-full bg-[#070b08] select-none overflow-hidden relative">
+        {/* Top Header */}
+        <div className="h-14 px-3 bg-[#0d1410] border-b border-emerald-950 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setCurrentSection('main')} 
+              className="p-1 -ml-1 text-emerald-400 hover:text-white rounded-lg cursor-pointer"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div>
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <span>Tareas & Automatizaciones IA</span>
+              </h2>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setShowNewTaskModal(true)}
+            className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Nueva Tarea</span>
+          </button>
+        </div>
+
+        {/* Content Body */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Summary KPI Cards */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-[#0d1410] border border-emerald-950 rounded-xl p-3 text-center">
+              <span className="text-[10px] font-mono text-zinc-400 block uppercase">Total</span>
+              <span className="text-base font-bold font-mono text-white">{tasksList.length}</span>
+            </div>
+            <div className="bg-[#0d1410] border border-emerald-800/80 rounded-xl p-3 text-center">
+              <span className="text-[10px] font-mono text-emerald-400 block uppercase">Pendientes</span>
+              <span className="text-base font-bold font-mono text-emerald-300">{pendingCount}</span>
+            </div>
+            <div className="bg-[#0d1410] border border-emerald-950 rounded-xl p-3 text-center">
+              <span className="text-[10px] font-mono text-zinc-400 block uppercase">Completadas</span>
+              <span className="text-base font-bold font-mono text-zinc-300">{completedCount}</span>
+            </div>
+          </div>
+
+          {/* Privacy and Execution Banner */}
+          <div className="bg-[#0d1410] border border-emerald-800/60 rounded-2xl p-3.5 flex items-start gap-3">
+            <Cpu className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            <p className="text-xs text-zinc-300 leading-relaxed font-mono">
+              Las tareas se ejecutan por el cronómetro interno del teléfono en segundo plano. No se sincronizan con servidores de terceros, garantizando privacidad absoluta.
+            </p>
+          </div>
+
+          {/* Tasks List */}
+          {tasksList.length === 0 ? (
+            <div className="py-12 px-4 text-center space-y-3 bg-[#0a0f0c] border border-dashed border-emerald-950 rounded-2xl">
+              <Clock className="w-10 h-10 text-emerald-500/50 mx-auto" />
+              <h3 className="text-sm font-bold text-white">No hay tareas programadas</h3>
+              <p className="text-xs text-zinc-400 max-w-xs mx-auto">
+                Programa recordatorios, reportes de bóveda local, mensajes programados o protocolos de atención autónoma.
+              </p>
+              <button
+                onClick={() => setShowNewTaskModal(true)}
+                className="mt-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs transition-all cursor-pointer"
+              >
+                Crear Mi Primera Tarea
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {tasksList.map(task => {
+                const isPending = task.status === 'pending';
+                const isExecuting = executingTaskId === task.id;
+
+                return (
+                  <div
+                    key={task.id}
+                    className={`bg-[#0d1410] border rounded-2xl p-3.5 space-y-2.5 transition-all ${
+                      isPending ? 'border-emerald-800/70 shadow-sm' : 'border-emerald-950/60 opacity-75'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            toggleTaskStatus(task.id);
+                            setTasksList(getScheduledTasks());
+                          }}
+                          className={`w-5 h-5 rounded-lg border flex items-center justify-center cursor-pointer transition-colors ${
+                            isPending
+                              ? 'border-emerald-600 bg-transparent text-transparent hover:border-emerald-400'
+                              : 'border-emerald-500 bg-emerald-500 text-black'
+                          }`}
+                          title={isPending ? 'Marcar como completada' : 'Reabrir tarea'}
+                        >
+                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        </button>
+                        <h4 className={`text-xs font-bold ${isPending ? 'text-white' : 'text-zinc-400 line-through'}`}>
+                          {task.title}
+                        </h4>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono bg-emerald-950 text-emerald-400 px-2 py-0.5 rounded border border-emerald-900">
+                          {task.scheduledTime}
+                        </span>
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                          task.type === 'message'
+                            ? 'bg-blue-950/60 text-blue-300 border-blue-900'
+                            : task.type === 'report'
+                            ? 'bg-purple-950/60 text-purple-300 border-purple-900'
+                            : task.type === 'customer_support'
+                            ? 'bg-amber-950/60 text-amber-300 border-amber-900'
+                            : 'bg-zinc-900 text-zinc-300 border-zinc-800'
+                        }`}>
+                          {task.type === 'message' ? 'Mensaje' : task.type === 'report' ? 'Reporte' : task.type === 'customer_support' ? 'Soporte' : 'Auto'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#070b08] p-2.5 rounded-xl border border-emerald-950/80 space-y-1">
+                      <div className="text-[10px] text-zinc-400 font-mono">
+                        <span className="text-zinc-500">Destino:</span> {task.targetContactOrForum || 'Bóveda General'}
+                      </div>
+                      <p className="text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed">
+                        {task.promptOrText}
+                      </p>
+                    </div>
+
+                    {/* Action row */}
+                    <div className="flex items-center justify-between pt-1 text-xs">
+                      <span className="text-[10px] text-zinc-500 font-mono">
+                        Creada: {task.createdAt}
+                      </span>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={async () => {
+                            setExecutingTaskId(task.id);
+                            const res = await executeTaskNow(task.id);
+                            setExecutingTaskId(null);
+                            setTasksList(getScheduledTasks());
+                            showNotificationToast(res.message);
+                          }}
+                          disabled={isExecuting}
+                          className="px-2.5 py-1 rounded-xl bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Ejecutar inmediatamente"
+                        >
+                          {isExecuting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                          <span>{isExecuting ? 'Ejecutando...' : 'Ejecutar'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            deleteScheduledTask(task.id);
+                            setTasksList(getScheduledTasks());
+                            showNotificationToast('Tarea eliminada');
+                          }}
+                          className="p-1 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-950/30 transition-colors cursor-pointer"
+                          title="Eliminar tarea"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Modal: Crear Nueva Tarea Programada */}
+        {showNewTaskModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-[#0c120e] border border-emerald-800 rounded-3xl p-5 max-w-sm w-full space-y-3.5 shadow-2xl animate-in fade-in">
+              <div className="flex items-center justify-between border-b border-emerald-950 pb-2">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-emerald-400" />
+                  <span>Nueva Tarea de IA</span>
+                </h3>
+                <button
+                  onClick={() => setShowNewTaskModal(false)}
+                  className="p-1 text-zinc-400 hover:text-white rounded-lg cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newTaskTitle.trim() || !newTaskPrompt.trim()) return;
+                  saveScheduledTask({
+                    title: newTaskTitle.trim(),
+                    scheduledTime: newTaskTime,
+                    type: newTaskType,
+                    targetContactOrForum: newTaskTarget.trim() || 'Bóveda General',
+                    promptOrText: newTaskPrompt.trim(),
+                    status: 'pending'
+                  });
+                  setNewTaskTitle('');
+                  setNewTaskPrompt('');
+                  setNewTaskTarget('');
+                  setShowNewTaskModal(false);
+                  setTasksList(getScheduledTasks());
+                  showNotificationToast('Tarea de IA programada con éxito');
+                }}
+                className="space-y-3"
+              >
+                <div>
+                  <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
+                    Título de la Tarea
+                  </label>
+                  <input
+                    type="text"
+                    value={newTaskTitle}
+                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                    placeholder="Ej: Reporte de seguridad / Enviar recordatorio"
+                    className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
+                      Hora de Ejecución
+                    </label>
+                    <input
+                      type="time"
+                      value={newTaskTime}
+                      onChange={(e) => setNewTaskTime(e.target.value)}
+                      className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
+                      Tipo de Acción
+                    </label>
+                    <select
+                      value={newTaskType}
+                      onChange={(e) => setNewTaskType(e.target.value as AiTaskSchedule['type'])}
+                      className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="message">Mensaje</option>
+                      <option value="report">Reporte</option>
+                      <option value="customer_support">Atención</option>
+                      <option value="automation">Automatización</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
+                    Destino (Contacto o Foro)
+                  </label>
+                  <input
+                    type="text"
+                    value={newTaskTarget}
+                    onChange={(e) => setNewTaskTarget(e.target.value)}
+                    placeholder="Nombre del contacto o canal (opcional)"
+                    className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
+                    Instrucción o Contenido del Mensaje
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={newTaskPrompt}
+                    onChange={(e) => setNewTaskPrompt(e.target.value)}
+                    placeholder="Instrucción detallada para la IA o texto que debe enviarse..."
+                    className="w-full bg-[#070b08] border border-emerald-900 rounded-xl p-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 resize-none"
+                    required
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewTaskModal(false)}
+                    className="px-3 py-1.5 rounded-xl bg-zinc-900 text-zinc-400 hover:text-white text-xs cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition-all shadow-md cursor-pointer"
+                  >
+                    Guardar Tarea
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ========================================================================= */
+  /* SUB-VIEW: HOSTING SOBERANO & SUBDOMINIOS DNS                              */
+  /* ========================================================================= */
+  if (currentSection === 'hosting_subdomains') {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-[#070b08] select-none overflow-hidden relative">
+        <div className="h-14 px-3 bg-[#0d1410] border-b border-emerald-950 flex items-center gap-3 shrink-0">
+          <button 
+            onClick={() => setCurrentSection('main')} 
+            className="p-1 -ml-1 text-emerald-400 hover:text-white rounded-lg cursor-pointer"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h2 className="text-base font-semibold text-white">Hosting Soberano & Subdominios DNS</h2>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Architecture Card */}
+          <div className="bg-[#0d1410] border border-emerald-800/70 rounded-2xl p-4 space-y-3 shadow-md">
+            <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs font-mono">
+              <Server className="w-4 h-4" />
+              <span>Arquitectura Desacoplada de Alta Disponibilidad</span>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed font-mono">
+              Permite alojar sitios web de clientes y comunidades sin requerir servidores corporativos costosos ni intermediarios centralizados.
+            </p>
+
+            <div className="bg-[#060a08] p-3 rounded-xl border border-emerald-950 space-y-2 text-xs">
+              <div className="flex items-start gap-2">
+                <span className="text-emerald-400 font-bold font-mono text-[11px]">1.</span>
+                <div>
+                  <strong className="text-white block">Servidor Raíz & Reverse Proxy (Caddy / Traefik)</strong>
+                  <span className="text-zinc-400 text-[11px]">
+                    Expuesto a IP pública estática en puertos 8443/443. Inspecciona SNI y genera certificados TLS v1.3 con Let's Encrypt al vuelo.
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <span className="text-emerald-400 font-bold font-mono text-[11px]">2.</span>
+                <div>
+                  <strong className="text-white block">Dominio Propio (Namecheap, GoDaddy, Cloudflare)</strong>
+                  <span className="text-zinc-400 text-[11px]">
+                    El usuario crea Registro A (@ apuntando a IP del Servidor) y CNAME (www apuntando a proxy.chattoj.net).
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <span className="text-emerald-400 font-bold font-mono text-[11px]">3.</span>
+                <div>
+                  <strong className="text-white block">Subdominios Dinámicos (Google Cloud DNS REST API)</strong>
+                  <span className="text-zinc-400 text-[11px]">
+                    Inyección automática de registros DNS con propagación Anycast mundial en menos de 4 segundos.
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <span className="text-emerald-400 font-bold font-mono text-[11px]">4.</span>
+                <div>
+                  <strong className="text-white block">Cada APK es un Nodo Soberano</strong>
+                  <span className="text-zinc-400 text-[11px]">
+                    Socket local en 127.0.0.1:8443, descubrimiento mDNS y buffer volátil de 32 MB en RAM (mlock) con cero escritura en disco.
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Action to launch Admin Server Manager Modal */}
+          <div className="bg-[#0d1410] border border-emerald-900 rounded-2xl p-4 space-y-3 text-center">
+            <h3 className="text-sm font-bold text-white">Panel Maestro de Hosting & Planes</h3>
+            <p className="text-xs text-zinc-400">
+              Administra planes de renta comercial, métricas cuánticas y enlaces de invitación sin restricciones.
+            </p>
+            <button
+              onClick={() => setShowServerManager(true)}
+              className="w-full py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Server className="w-4 h-4" />
+              <span>Abrir Gestor de Servidor & Hosting</span>
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1578,6 +2125,46 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <span className="text-[9px] bg-emerald-950 text-emerald-400 px-1.5 py-0.2 rounded border border-emerald-900">En tu teléfono</span>
               </h4>
               <p className="text-xs text-zinc-300 font-mono truncate">La IA corre dentro de tu celular: nada de lo que preguntes sale a internet</p>
+            </div>
+          </div>
+
+          {/* 7. Tareas & Automatizaciones IA */}
+          <div
+            onClick={() => setCurrentSection('tasks')}
+            className="px-4 py-3.5 flex items-center gap-4 hover:bg-emerald-950/25 transition-colors cursor-pointer"
+          >
+            <div className="w-6 flex justify-center text-emerald-400">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between pr-2">
+                <h4 className="text-sm font-medium text-white flex items-center gap-1.5">
+                  <span>Tareas & Automatizaciones IA</span>
+                </h4>
+                {tasksList.filter(t => t.status === 'pending').length > 0 && (
+                  <span className="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-700 font-mono font-bold px-1.5 py-0.2 rounded-full">
+                    {tasksList.filter(t => t.status === 'pending').length} pendientes
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-zinc-300 font-mono truncate">Mensajes programados, reportes locales y atención autónoma</p>
+            </div>
+          </div>
+
+          {/* 8. Hosting Soberano & Subdominios DNS */}
+          <div
+            onClick={() => setCurrentSection('hosting_subdomains')}
+            className="px-4 py-3.5 flex items-center gap-4 hover:bg-emerald-950/25 transition-colors cursor-pointer"
+          >
+            <div className="w-6 flex justify-center text-emerald-400">
+              <Server className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-medium text-white flex items-center gap-1.5">
+                <span>Hosting Soberano & Subdominios DNS</span>
+                <span className="text-[9px] bg-emerald-950 text-emerald-400 px-1.5 py-0.2 rounded border border-emerald-900">Multi-nodo</span>
+              </h4>
+              <p className="text-xs text-zinc-300 font-mono truncate">Reverse proxy Caddy/Traefik, Google Cloud DNS y nodo APK</p>
             </div>
           </div>
 

@@ -6,6 +6,10 @@ export interface UserProfile {
   avatar: string;
   nodeStatus: 'online' | 'mesh-relay' | 'quantum-sync';
   isRegistered: boolean;
+  publicKeyE2EE?: string; // Clave Pública ECDH P-256 (Base64) generada en dispositivo
+  publicKeyFingerprint?: string; // SHA-256 Huella de la Clave Pública
+  hasPrivateKeyE2EE?: boolean; // Confirmación de que la Clave Privada está sellada en el dispositivo
+  duckDnsServer?: string; // Servidor DuckDNS configurado para relay ciego
 }
 
 export interface Message {
@@ -27,6 +31,15 @@ export interface Message {
   isViewed?: boolean;   // Ya abierto / reproducido
   deletedForEveryone?: boolean; // Eliminado para todos
   deletedForUserIds?: string[];  // Eliminado solo para ciertos usuarios
+  e2eeEnvelope?: {
+    envelopeId: string;
+    senderEphemeralPublicKey: string;
+    recipientKeyFingerprint: string;
+    iv: string;
+    ciphertext: string;
+    relayServer: string;
+    tamperSeal: string;
+  };
 }
 
 export interface ChatParticipant {
@@ -46,6 +59,7 @@ export interface Chat {
   unreadCount: number;
   online: boolean;
   secureId: string;
+  recipientPublicKey?: string; // Clave pública del destinatario para cifrado E2EE
   adminId?: string;
   participantsList?: ChatParticipant[];
   messagesEnabled?: boolean; // WhatsApp style: if false, only admins can send messages

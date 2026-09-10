@@ -200,7 +200,7 @@ export const ForumsView: React.FC<ForumsViewProps> = ({
     setCreationError(null);
 
     if (isBannedFromCreating) {
-      setCreationError('Tu cuenta está restringida de crear más foros o fotos debido a clausuras previas por reportes de la comunidad.');
+      setCreationError('Tu cuenta está restringida de crear más foros debido a clausuras previas por reportes de la comunidad.');
       return;
     }
 
@@ -336,7 +336,7 @@ export const ForumsView: React.FC<ForumsViewProps> = ({
   const handleLeaveForum = () => {
     if (!selectedTopic) return;
 
-    if (window.confirm('¿Deseas salir de este foro / foto comunitaria?')) {
+    if (window.confirm('¿Deseas salir de este foro comunitario?')) {
       const updatedJoined = (selectedTopic.joinedUserIds || []).filter(id => id !== currentUser.userId);
       const updatedParticipants = (selectedTopic.participants || []).filter(p => p.id !== currentUser.userId);
 
@@ -607,11 +607,11 @@ export const ForumsView: React.FC<ForumsViewProps> = ({
             </div>
           </div>
 
-          {/* GRID OF FORUMS & PHOTOS */}
+          {/* GRID OF FORUMS */}
           <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {filteredTopics.length === 0 ? (
               <div className="col-span-full py-12 text-center text-zinc-500 text-xs">
-                No se encontraron foros o fotos registradas con este filtro.
+                No se encontraron foros registrados con este filtro.
               </div>
             ) : (
               filteredTopics.map((topic) => {
@@ -831,7 +831,7 @@ export const ForumsView: React.FC<ForumsViewProps> = ({
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
             {selectedTopic.replies.length === 0 ? (
               <div className="text-center py-12 text-zinc-500 text-xs">
-                Aún no hay mensajes en este foro de fotos. ¡Sé el primero en aportar una postura civil o disidente!
+                Aún no hay mensajes en este foro civil. ¡Sé el primero en aportar una postura civil o disidente!
               </div>
             ) : (
               selectedTopic.replies.map((reply) => {
@@ -1308,9 +1308,9 @@ export const ForumsView: React.FC<ForumsViewProps> = ({
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
               <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-900/60 text-amber-200">
-                <p className="font-semibold mb-1">🛡️ Control Total de Tu Red de Foros y Fotos</p>
+                <p className="font-semibold mb-1">🛡️ Control Total de Tu Red de Foros Comunitarios</p>
                 <p className="text-[11px] text-zinc-300">
-                  Aquí puedes bloquear o desbloquear creadores, restringir ver foros de ciertos usuarios, y gestionar fotos bloqueadas.
+                  Aquí puedes bloquear o desbloquear creadores, restringir ver foros de ciertos usuarios, y gestionar foros bloqueados.
                 </p>
               </div>
 
@@ -1319,7 +1319,7 @@ export const ForumsView: React.FC<ForumsViewProps> = ({
                 <h4 className="font-bold text-white uppercase font-mono text-[11px]">Creadores y Usuarios Bloqueados ({blockedCreatorIds.length})</h4>
                 {blockedCreatorIds.length === 0 ? (
                   <p className="text-[11px] text-zinc-500 italic p-2 bg-[#080d0a] rounded-xl border border-emerald-950">
-                    No has bloqueado a ningún creador de foros o fotos.
+                    No has bloqueado a ningún creador de foros.
                   </p>
                 ) : (
                   blockedCreatorIds.map(id => {
@@ -1342,10 +1342,10 @@ export const ForumsView: React.FC<ForumsViewProps> = ({
 
               {/* Blocked Forums Items */}
               <div className="space-y-2">
-                <h4 className="font-bold text-white uppercase font-mono text-[11px]">Foros y Fotos Ocultos ({blockedForumsList.length})</h4>
+                <h4 className="font-bold text-white uppercase font-mono text-[11px]">Foros Ocultos ({blockedForumsList.length})</h4>
                 {blockedForumsList.length === 0 ? (
                   <p className="text-[11px] text-zinc-500 italic p-2 bg-[#080d0a] rounded-xl border border-emerald-950">
-                    No hay foros o fotos bloqueados individualmente.
+                    No hay foros bloqueados individualmente.
                   </p>
                 ) : (
                   blockedForumsList.map(f => (

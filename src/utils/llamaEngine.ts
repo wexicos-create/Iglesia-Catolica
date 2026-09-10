@@ -6,6 +6,7 @@
 import { publishAnnouncement } from './announcements';
 import { neuroShieldEngine } from './neuroShieldEngine';
 import { getHostedProjects, INITIAL_SWARM_STATS } from './swarmServer';
+import { generateIntelligentResponse } from './llamaConversationalEngine';
 
 export interface LlamaResponse {
   reply: string;
@@ -63,11 +64,8 @@ export async function askLlamaOffline(
 ): Promise<LlamaResponse> {
   const start = performance.now();
 
-  // 0. Background Autonomous Defense Mesh: Inspect and neutralize malicious vectors silently
-  neuroShieldEngine.inspectAndNeutralizeThreatVector(currentUserName, prompt);
-  
-  // Simulate local neural processing delay (fast offline model)
-  await new Promise(r => setTimeout(r, 400 + Math.random() * 250));
+  // Fast local offline inference simulation
+  await new Promise(r => setTimeout(r, 200 + Math.random() * 150));
 
   const lower = prompt.toLowerCase();
   let reply = '';
@@ -299,26 +297,11 @@ El comunicado ha sido enviado a la pantalla de inicio ("Chats"). Todos los usuar
 • Modificación y Control: Puedes emitir comunicados escribiendo "comunicado: [mensaje]" para desplegar el "AVISO IMPORTANTE" en inicio, administrar los foros civiles y regular la moderación.
 • Aislamiento Estricto: Los datos nunca se filtran ni se transfieren a servidores externos.`;
   }
-  // 5. STANDARD KNOWLEDGE BASE
+  // 5. VERSATILE GENERAL-PURPOSE REASONING & CONVERSATIONAL ENGINE
+  // Handles: Open conversation, code generation in any language, music recommendations & theory,
+  // math, science, writing/emails, media requests with realistic disclaimers, and system queries.
   else {
-    let category = 'default';
-    if (lower.includes('segurid') || lower.includes('clave') || lower.includes('encript') || lower.includes('privacid') || lower.includes('filtr')) {
-      category = 'seguridad';
-    } else if (lower.includes('hola') || lower.includes('buenos') || lower.includes('hey')) {
-      category = 'hola';
-    } else if (lower.includes('llamada') || lower.includes('voz') || lower.includes('video')) {
-      category = 'llamada';
-    } else if (lower.includes('foro') || lower.includes('debate') || lower.includes('comunidad') || lower.includes('activis') || lower.includes('foto')) {
-      category = 'foro';
-    }
-
-    const responses = OFFLINE_KNOWLEDGE_BASE[category];
-    const randomBase = responses[Math.floor(Math.random() * responses.length)];
-    
-    reply = randomBase;
-    if (category === 'default') {
-      reply = `Llama Offline (Análisis de "${prompt.slice(0, 30)}..."): ${randomBase}`;
-    }
+    reply = generateIntelligentResponse(prompt, currentUserName);
   }
 
   const randomHash = '0x' + Array.from({ length: 8 }, () => Math.floor(Math.random()*16).toString(16)).join('').toUpperCase() + '...Q';

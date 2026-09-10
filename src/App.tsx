@@ -9,14 +9,23 @@ import { ChatRoom } from './components/ChatRoom';
 import { CallsView } from './components/CallsView';
 import { ForumsView } from './components/ForumsView';
 import { LlamaAiTerminal } from './components/LlamaAiTerminal';
-import { SettingsView } from './components/SettingsView';
+import { SettingsView, SettingsSection } from './components/SettingsView';
 import { AdminServerManager } from './components/AdminServerManager';
 import { CallModal } from './components/CallModal';
 import { PushNotificationToast } from './components/PushNotificationToast';
+import { MobileStatusBar } from './components/MobileStatusBar';
+import { AndroidAuditPermissionsModal } from './components/AndroidAuditPermissionsModal';
 import { neuroShieldEngine } from './utils/neuroShieldEngine';
 import { offlineAudio } from './utils/audioAlerts';
 import { analyzeMessageThreat } from './utils/threatProtection';
 import { askLlamaOffline } from './utils/llamaEngine';
+import { 
+  encryptE2EEMessage, 
+  decryptE2EEMessage, 
+  getOrCreateContactPublicKey,
+  E2EEEnvelope
+} from './utils/e2eeEngine';
+import { relayE2EEEnvelopeViaDuckDns } from './utils/duckDnsRelay';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
@@ -26,6 +35,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('chats');
   const [previousTab, setPreviousTab] = useState<ActiveTab>('chats');
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>('main');
   const [chats, setChats] = useState<Chat[]>(() => {
     // Clean old demo cookies/cache on start from zero
     localStorage.removeItem('chattoj_chats');
@@ -41,6 +51,15 @@ export default function App() {
 
   const [activeCall, setActiveCall] = useState<{ chat: Chat; type: 'voice' | 'video'; isSingleUse?: boolean } | null>(null);
   const [notification, setNotification] = useState<{ title: string; body: string } | null>(null);
+  const [showAuditModal, setShowAuditModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleOpenAudit = () => setShowAuditModal(true);
+    window.addEventListener('chattoj-open-audit-modal', handleOpenAudit);
+    return () => {
+      window.removeEventListener('chattoj-open-audit-modal', handleOpenAudit);
+    };
+  }, []);
 
   useEffect(() => {
     const handleSecurityAlert = (e: any) => {
@@ -156,8 +175,9 @@ export default function App() {
     setActiveTab('chats');
   };
 
-  const handleOpenSettings = (fromTab: ActiveTab) => {
+  const handleOpenSettings = (fromTab: ActiveTab, targetSection: SettingsSection = 'main') => {
     setPreviousTab(fromTab);
+    setSettingsInitialSection(targetSection);
     setActiveTab('settings');
   };
 
@@ -365,10 +385,15 @@ export default function App() {
   const isInsideChatRoom = activeTab === 'chats' && selectedChatId !== null;
 
   return (
-    <div className="h-[100dvh] max-h-[100dvh] w-full bg-[#050806] flex items-center justify-center overflow-hidden font-['Plus_Jakarta_Sans',sans-serif]">
-      {/* Mobile APK Container - fits 100dvh, never overflows, no window scroll */}
-      <div className="w-full max-w-[430px] h-[100dvh] bg-[#070b08] sm:border-x sm:border-emerald-950 sm:shadow-2xl flex flex-col overflow-hidden relative">
+    <div 
+      className="h-[100dvh] max-h-[100dvh] w-full bg-[#050806] flex items-center justify-center overflow-hidden font-['Plus_Jakarta_Sans',sans-serif] p-0 sm:py-1 box-border"
+    >
+      {/* Mobile APK Container - fits within device viewport with compact status bar */}
+      <div className="w-full max-w-[430px] h-full max-h-full bg-[#070b08] sm:border sm:border-emerald-950/70 sm:shadow-2xl flex flex-col overflow-hidden relative sm:rounded-3xl">
         
+        {/* Compact Android Mobile Status Bar: hora, señal, red 5G, wifi, batería (28px height) */}
+        <MobileStatusBar />
+
         {/* Main View Body */}
         <main className="flex-1 flex flex-col h-full overflow-hidden relative">
           {activeTab === 'chats' && (
@@ -426,7 +451,8 @@ export default function App() {
           {activeTab === 'llama-ai' && (
             <LlamaAiTerminal
               currentUser={currentUser}
-              onOpenSettings={() => handleOpenSettings('llama-ai')}
+              onOpenSettings={(section) => handleOpenSettings('llama-ai', section || 'main')}
+              onOpenTasks={() => handleOpenSettings('llama-ai', 'tasks')}
             />
           )}
 
@@ -436,6 +462,7 @@ export default function App() {
               onUpdateProfile={(updated) => setCurrentUser(updated)}
               onBack={() => setActiveTab(previousTab)}
               onLogout={handleLogout}
+              initialSection={settingsInitialSection}
             />
           )}
 
@@ -474,7 +501,17 @@ export default function App() {
           notification={notification}
           onClose={() => setNotification(null)}
         />
+
+        {/* Bottom slim gesture indicator */}
+        <div className="w-full py-1 bg-[#070b08] flex items-center justify-center select-none shrink-0 border-t border-emerald-950/20">
+          <div className="w-24 h-1 bg-zinc-700/40 rounded-full" />
+        </div>
       </div>
+
+      {/* Android Hardware Audit & Permissions Modal */}
+      {showAuditModal && (
+        <AndroidAuditPermissionsModal onClose={() => setShowAuditModal(false)} />
+      )}
     </div>
   );
 }

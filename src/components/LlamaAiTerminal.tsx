@@ -16,13 +16,14 @@ import {
   Instagram, Facebook, Lock, Volume2, VolumeX, Mic, MicOff,
   History, Clock, Plus, Trash2, FileText, Play, ShieldAlert,
   Calendar, Layers, CheckCircle2, ChevronRight, HelpCircle,
-  Server, Globe, HardDrive
+  Server, Globe, HardDrive, MoreVertical
 } from 'lucide-react';
 import { AdminServerManager } from './AdminServerManager';
 
 interface LlamaAiTerminalProps {
   currentUser: UserProfile;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section?: string) => void;
+  onOpenTasks?: () => void;
 }
 
 interface AttachedFileState {
@@ -33,7 +34,13 @@ interface AttachedFileState {
   previewUrl?: string;
 }
 
-export const LlamaAiTerminal: React.FC<LlamaAiTerminalProps> = ({ currentUser, onOpenSettings }) => {
+export const LlamaAiTerminal: React.FC<LlamaAiTerminalProps> = ({ 
+  currentUser, 
+  onOpenSettings,
+  onOpenTasks 
+}) => {
+  // Dropdown menu state to prevent header clutter
+  const [showMenuDropdown, setShowMenuDropdown] = useState(false);
   // Initial Start Screen vs Active Terminal State
   const [hasStarted, setHasStarted] = useState<boolean>(() => {
     return localStorage.getItem('chattoj_ai_terminal_started') === 'true';
@@ -55,7 +62,7 @@ export const LlamaAiTerminal: React.FC<LlamaAiTerminalProps> = ({ currentUser, o
           {
             id: 'm-init',
             sender: 'ai',
-            text: `Hola ${currentUser.name}. Tu Asistente de Inteligencia Artificial opera 100% en el procesador interno de tu teléfono.\n\n🛡️ PRIVACIDAD & AISLAMIENTO ESTRICTO:\n• No sube datos a internet ni a servidores de terceros.\n• Por defecto NO tiene acceso a tus chats privados a menos que actives el "Modo Asistente Personal" en Ajustes.\n• Puedes dictar por voz (micrófono), escuchar respuestas (bocina), adjuntar cualquier archivo (+) y programar mensajes o reportes.`,
+            text: `¡Hola ${currentUser.name}! Soy tu Asistente de IA General, ejecutándome de forma 100% soberana en el procesador de este teléfono.\n\n✨ Asistente Integral con Función Ilimitada:\n• Capacidad analítica y creativa ilimitada: programación avanzada (Python, JS/TS, C++, Rust, Go, SQL, Bash), resolución matemática, física, ciencias, humanidades, filosofía, redacción y resolución de problemas cotidianos.\n\n⚖️ Marco Ético y Legal Internacional:\n• Apego inquebrantable a los tratados internacionales: prohibición estricta de generación o revelación de virus informáticos, malware destructivo o delitos tipificados por el Convenio de Budapest y leyes internacionales.\n\n🛡️ Privacidad Soberana Total: Cero servidores externos. Todo se computa aquí mismo en tu dispositivo.`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             hash: '0xQ...LOCAL',
             timeMs: 90
@@ -307,6 +314,20 @@ export const LlamaAiTerminal: React.FC<LlamaAiTerminalProps> = ({ currentUser, o
     }));
   };
 
+  // Clear current chat conversation
+  const handleClearCurrentChat = () => {
+    updateSessionMessages([
+      {
+        id: 'm-init-' + Date.now(),
+        sender: 'ai',
+        text: `Conversación reiniciada. ¿En qué te puedo asistir hoy, ${currentUser.name}? Puedes platicar de cualquier tema, generar código, redactar textos, resolver dudas, organizar tareas o consultar teoría musical y tecnología.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        hash: '0xQ...RESTART',
+        timeMs: 15
+      }
+    ]);
+  };
+
   // Create new session
   const handleCreateNewSession = () => {
     const newId = 'session-' + Date.now();
@@ -460,11 +481,15 @@ export const LlamaAiTerminal: React.FC<LlamaAiTerminalProps> = ({ currentUser, o
               </div>
               <div className="flex items-start gap-2">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                <span><strong>Privacidad en Chats:</strong> La IA <em>no tiene acceso a ningún dato de tus chats</em> a menos que tú decidas activar el Modo Asistente Personal en Ajustes para automatizar atención o tareas.</span>
+                <span><strong>Asistente General Sin Límites:</strong> Capaz de mantener pláticas libres, resolver dudas, escribir y depurar código, redactar documentos o asesorar en cualquier tema cotidiano o profesional.</span>
               </div>
               <div className="flex items-start gap-2">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                <span><strong>Herramientas Multimodales:</strong> Micrófono de voz, bocina de síntesis de audio, adjuntar cualquier archivo (+), programar mensajes y reportes.</span>
+                <span><strong>Tareas y Automatizaciones en Ajustes:</strong> Programa recordatorios, reportes locales y mensajes autónomos directamente desde Ajustes sin saturar el chat.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                <span><strong>Realismo en Dispositivo:</strong> Inferencia basada en lenguaje. Puede orientar sobre teoría musical y bibliotecas, pero no sintetiza archivos de audio, video o imágenes.</span>
               </div>
             </div>
           </div>
@@ -524,8 +549,8 @@ export const LlamaAiTerminal: React.FC<LlamaAiTerminalProps> = ({ currentUser, o
           </div>
         </div>
 
-        {/* Top Actions: Voice Mute, History, Schedule, Config, Announce */}
-        <div className="flex items-center gap-1">
+        {/* Top Actions: Voice Mute, History, More Options Dropdown */}
+        <div className="flex items-center gap-1.5 relative">
           {/* Mute/Unmute Voice Speaker Icon */}
           <button
             onClick={toggleVoiceMute}
@@ -548,44 +573,109 @@ export const LlamaAiTerminal: React.FC<LlamaAiTerminalProps> = ({ currentUser, o
             <History className="w-4 h-4" />
           </button>
 
-          {/* Schedule Tasks Button */}
+          {/* 3-Dots Menu Dropdown: Organizes Tasks in Settings, Hosting, Privacy Config, etc. */}
           <button
-            onClick={() => setShowScheduleModal(true)}
-            className="p-2 rounded-xl bg-[#070b08] text-zinc-400 hover:text-white border border-emerald-900/60 hover:bg-emerald-950/60 transition-colors cursor-pointer relative"
-            title="Programar Mensajes / Tareas IA"
+            onClick={() => setShowMenuDropdown(!showMenuDropdown)}
+            className={`p-2 rounded-xl border transition-colors cursor-pointer relative ${
+              showMenuDropdown
+                ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
+                : 'bg-[#070b08] text-zinc-400 hover:text-white border-emerald-900/60 hover:bg-emerald-950/60'
+            }`}
+            title="Opciones y Ajustes"
           >
-            <Clock className="w-4 h-4" />
+            <MoreVertical className="w-4 h-4" />
             {scheduledTasks.filter(t => t.status === 'pending').length > 0 && (
-              <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full" />
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-400 rounded-full" />
             )}
           </button>
 
-          {/* Admin Parameters Config */}
-          <button
-            onClick={() => setShowAdminConfigModal(true)}
-            className="p-2 rounded-xl bg-[#070b08] text-zinc-400 hover:text-white border border-emerald-900/60 hover:bg-emerald-950/60 transition-colors cursor-pointer"
-            title="Ajustes Admin de la IA"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+          {/* Dropdown Menu Modal */}
+          {showMenuDropdown && (
+            <>
+              <div 
+                className="fixed inset-0 z-40 bg-transparent" 
+                onClick={() => setShowMenuDropdown(false)} 
+              />
+              <div className="absolute right-0 top-12 z-50 w-64 bg-[#0d1410] border border-emerald-800 rounded-2xl shadow-2xl py-2 animate-in fade-in zoom-in-95 space-y-0.5">
+                {/* 1. Tareas en Ajustes */}
+                <button
+                  onClick={() => {
+                    setShowMenuDropdown(false);
+                    if (onOpenTasks) {
+                      onOpenTasks();
+                    } else if (onOpenSettings) {
+                      onOpenSettings('tasks');
+                    }
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs text-zinc-200 hover:bg-emerald-950/40 hover:text-white flex items-center justify-between cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Clock className="w-4 h-4 text-emerald-400" />
+                    <span>Tareas de IA en Ajustes</span>
+                  </div>
+                  {scheduledTasks.filter(t => t.status === 'pending').length > 0 && (
+                    <span className="text-[10px] bg-emerald-950 text-emerald-400 px-1.5 py-0.2 rounded-full border border-emerald-800 font-mono">
+                      {scheduledTasks.filter(t => t.status === 'pending').length}
+                    </span>
+                  )}
+                </button>
 
-          {/* Swarm Server & Steganography Web Hosting Button */}
-          <button
-            onClick={() => setShowServerManagerModal(true)}
-            className="p-2 rounded-xl bg-[#070b08] text-emerald-400 hover:text-white border border-emerald-900/60 hover:bg-emerald-950/60 transition-colors cursor-pointer"
-            title="Servidor Enjambre (10,000,000 GB) & Web Hosting (.jpg produplicuantistomica+)"
-          >
-            <Server className="w-4 h-4" />
-          </button>
+                {/* 2. Hosting Soberano & Servidor */}
+                <button
+                  onClick={() => {
+                    setShowMenuDropdown(false);
+                    if (onOpenSettings) {
+                      onOpenSettings('hosting_subdomains');
+                    } else {
+                      setShowServerManagerModal(true);
+                    }
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs text-zinc-200 hover:bg-emerald-950/40 hover:text-white flex items-center gap-2.5 cursor-pointer transition-colors"
+                >
+                  <Server className="w-4 h-4 text-emerald-400" />
+                  <span>Hosting Soberano & Servidor</span>
+                </button>
 
-          {/* Megaphone Announcement */}
-          <button
-            onClick={() => setShowAnnouncementModal(true)}
-            className="p-2 rounded-xl bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 hover:bg-emerald-900 transition-colors cursor-pointer"
-            title="Publicar Aviso Importante en Inicio"
-          >
-            <Megaphone className="w-4 h-4" />
-          </button>
+                {/* 3. Modo Asistente & Privacidad */}
+                <button
+                  onClick={() => {
+                    setShowMenuDropdown(false);
+                    setShowAdminConfigModal(true);
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs text-zinc-200 hover:bg-emerald-950/40 hover:text-white flex items-center gap-2.5 cursor-pointer transition-colors"
+                >
+                  <Settings className="w-4 h-4 text-emerald-400" />
+                  <span>Modo Asistente & Privacidad</span>
+                </button>
+
+                {/* 4. Publicar Aviso Comunitario */}
+                <button
+                  onClick={() => {
+                    setShowMenuDropdown(false);
+                    setShowAnnouncementModal(true);
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs text-zinc-200 hover:bg-emerald-950/40 hover:text-white flex items-center gap-2.5 cursor-pointer transition-colors"
+                >
+                  <Megaphone className="w-4 h-4 text-emerald-400" />
+                  <span>Publicar Aviso Comunitario</span>
+                </button>
+
+                <div className="my-1 border-t border-emerald-950/80" />
+
+                {/* 5. Limpiar Conversación */}
+                <button
+                  onClick={() => {
+                    setShowMenuDropdown(false);
+                    handleClearCurrentChat();
+                  }}
+                  className="w-full px-3.5 py-2.5 text-left text-xs text-red-400 hover:bg-red-950/30 flex items-center gap-2.5 cursor-pointer transition-colors"
+                >
+                  <Trash2 className="w-4 h-4 text-red-400" />
+                  <span>Limpiar Conversación Actual</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

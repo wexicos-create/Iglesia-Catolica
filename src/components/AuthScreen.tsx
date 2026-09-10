@@ -7,25 +7,64 @@ import {
   getExistingVault, 
   getOrCreateDeviceFingerprint,
   isUsernameTaken,
-  changePasswordWithHardwareValidation
+  changePasswordWithHardwareValidation,
+  hashString
 } from '../utils/cryptoStorage';
-import { Shield, Lock, Smartphone, Terminal, CheckCircle2, KeyRound, Sparkles, RefreshCw, Key } from 'lucide-react';
+import { 
+  generateQuantumJpgContainer, 
+  checkUsernameInBlindedMesh 
+} from '../utils/googleQuantumJpgDb';
+import { 
+  generateAndStoreDeviceE2EEKeys, 
+  getStoredDeviceE2EEPublicKey,
+  E2EEKeyPairData 
+} from '../utils/e2eeEngine';
+import { getDuckDnsRelayConfig } from '../utils/duckDnsRelay';
+import { AndroidAuditPermissionsModal } from './AndroidAuditPermissionsModal';
+import { Shield, Lock, Smartphone, Terminal, CheckCircle2, KeyRound, Sparkles, RefreshCw, Cpu, Network } from 'lucide-react';
 
 interface AuthScreenProps {
   onLogin: (profile: UserProfile) => void;
 }
 
+const generateFreshRandom11DigitId = (): string => {
+  try {
+    const array = new Uint32Array(2);
+    crypto.getRandomValues(array);
+    const rawNum = ((BigInt(array[0]) << 32n) | BigInt(array[1])).toString();
+    const candidate = rawNum.replace(/\D/g, '');
+    if (candidate.length >= 11) {
+      return candidate.slice(0, 11);
+    }
+  } catch {}
+  return Math.floor(10000000000 + Math.random() * 90000000000).toString();
+};
+
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [mode, setMode] = useState<'register' | 'login' | 'recover'>('register');
   const [userIdInput, setUserIdInput] = useState('');
-  const [userName, setUserName] = useState('Jo Cervantes');
-  const [userPassword, setUserPassword] = useState('');
+  const [userName, setUserName] = useState(''); // Always blank on start as requested
+  const [userPassword, setUserPassword] = useState(''); // Always blank
   const [newPasswordRecovery, setNewPasswordRecovery] = useState('');
   const [quantumKeyInput, setQuantumKeyInput] = useState('');
   const [generatedKey, setGeneratedKey] = useState('');
+  const [e2eeInfo, setE2eeInfo] = useState<E2EEKeyPairData | null>(null);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [deviceId, setDeviceId] = useState('');
+  const [showAuditModal, setShowAuditModal] = useState(false);
+
+  // Genera o recupera el par de claves E2EE localmente en el dispositivo
+  const refreshE2EEKeysForId = async (id11: string) => {
+    if (id11.length === 11) {
+      try {
+        const keys = await generateAndStoreDeviceE2EEKeys(id11);
+        setE2eeInfo(keys);
+      } catch (err) {
+        console.error('Error generating device E2EE keys', err);
+      }
+    }
+  };
 
   useEffect(() => {
     const devId = getOrCreateDeviceFingerprint();
@@ -35,13 +74,35 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     if (existing) {
       setMode('login');
       setUserIdInput(existing.userId);
-      setUserName(existing.name);
+      setUserName(''); // Keep blank so user inputs their credentials
+      setUserPassword('');
+      setQuantumKeyInput('');
+      setGeneratedKey(generateQuantumKey(existing.userId));
+      refreshE2EEKeysForId(existing.userId);
     } else {
-      const defaultId = '83920194821';
-      setUserIdInput(defaultId);
-      setGeneratedKey(generateQuantumKey(defaultId));
+      // Fresh new install / APK: generate fresh brand new unique ID
+      const freshId = generateFreshRandom11DigitId();
+      setUserIdInput(freshId);
+      setGeneratedKey(generateQuantumKey(freshId));
+      setUserName('');
+      setUserPassword('');
+      setQuantumKeyInput('');
+      refreshE2EEKeysForId(freshId);
     }
   }, []);
+
+  const renewFreshIdentity = () => {
+    const freshId = generateFreshRandom11DigitId();
+    setUserIdInput(freshId);
+    const newKey = generateQuantumKey(freshId);
+    setGeneratedKey(newKey);
+    setUserName('');
+    setUserPassword('');
+    setQuantumKeyInput('');
+    setError('');
+    setSuccessMsg('✨ Nuevo ID Soberano y Claves E2EE generadas para esta instalación.');
+    refreshE2EEKeysForId(freshId);
+  };
 
   const handleIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.replace(/\D/g, '').slice(0, 11);
@@ -53,6 +114,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         setQuantumKeyInput(newKey);
       }
       setError('');
+      refreshE2EEKeysForId(val);
     }
   };
 
@@ -66,6 +128,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       return;
     }
 
+    // Asegurar que las claves asimétricas E2EE residan físicamente en el dispositivo
+    let activeE2EE = e2eeInfo;
+    if (!activeE2EE || activeE2EE.userId !== userIdInput) {
+      activeE2EE = await generateAndStoreDeviceE2EEKeys(userIdInput);
+      setE2eeInfo(activeE2EE);
+    }
+    const duckDnsCfg = getDuckDnsRelayConfig();
+
     if (mode === 'register') {
       if (!userName.trim()) {
         setError('Debes ingresar un nombre de usuario.');
@@ -73,20 +143,38 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       }
 
       if (isUsernameTaken(userName.trim())) {
-        setError(`El nombre de usuario "${userName.trim()}" ya está registrado en la base de datos. Cada nombre es de un solo uso.`);
+        setError(`El nombre de usuario "${userName.trim()}" ya está registrado en este dispositivo. Cada nombre es de un solo uso.`);
+        return;
+      }
+
+      // Validar también en la malla interconectada segura sin revelar datos
+      const isTakenInMesh = await checkUsernameInBlindedMesh(userName.trim());
+      if (isTakenInMesh) {
+        setError(`El nombre de usuario "${userName.trim()}" ya está reclamado en la red interconectada. Elige otro.`);
         return;
       }
 
       try {
         await registerAdminVault(userIdInput, userName.trim(), generatedKey, userPassword.trim() || undefined);
+
+        // Generar contenedor .jpgduocauantomic+ conectado con base de datos de Google y autodestrucción
+        const passwordHashForVault = userPassword.trim() 
+          ? await hashString(userPassword.trim() + userIdInput)
+          : generatedKey;
+        await generateQuantumJpgContainer(userIdInput, userName.trim(), passwordHashForVault);
+
         const profile: UserProfile = {
           userId: userIdInput,
           quantumKey: generatedKey,
           name: userName.trim(),
-          statusMessage: '🔒 Nodo Local Protegido con Llama Offline',
+          statusMessage: '🔒 Nodo E2EE Protegido • DuckDNS Blind Relay',
           avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
           nodeStatus: 'online',
-          isRegistered: true
+          isRegistered: true,
+          publicKeyE2EE: activeE2EE.publicKeyBase64,
+          publicKeyFingerprint: activeE2EE.publicKeyFingerprint,
+          hasPrivateKeyE2EE: true,
+          duckDnsServer: duckDnsCfg.subdomain
         };
         onLogin(profile);
       } catch (err: any) {
@@ -105,10 +193,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         userId: userIdInput,
         quantumKey: generatedKey,
         name: finalName,
-        statusMessage: '🔒 Sesión Verificada en Hardware Local',
+        statusMessage: '🔒 Sesión E2EE Verificada en Hardware Local',
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
         nodeStatus: 'online',
-        isRegistered: true
+        isRegistered: true,
+        publicKeyE2EE: activeE2EE.publicKeyBase64,
+        publicKeyFingerprint: activeE2EE.publicKeyFingerprint,
+        hasPrivateKeyE2EE: true,
+        duckDnsServer: duckDnsCfg.subdomain
       };
       onLogin(profile);
     } else if (mode === 'recover') {
@@ -130,12 +222,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   };
 
   const handleQuickDemoRegister = () => {
-    const random11 = Math.floor(10000000000 + Math.random() * 90000000000).toString();
-    setUserIdInput(random11);
-    const k = generateQuantumKey(random11);
-    setGeneratedKey(k);
-    setQuantumKeyInput(k);
-    setUserName('Jo Cervantes');
+    renewFreshIdentity();
   };
 
   const handleLoadSavedCredentials = () => {
@@ -166,12 +253,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             </p>
           </div>
 
-          {/* Mode Switcher */}
+            {/* Mode Switcher */}
           <div className="flex bg-[#070b08] p-1 rounded-xl border border-emerald-950 mb-3">
             <button
               type="button"
               onClick={() => { setMode('register'); setError(''); }}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
+              className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all cursor-pointer ${
                 mode === 'register' ? 'bg-emerald-600/25 text-emerald-300 border border-emerald-500/30' : 'text-zinc-400'
               }`}
             >
@@ -187,7 +274,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                   setUserIdInput(existing.userId);
                 }
               }}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
+              className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all cursor-pointer ${
                 mode === 'login' ? 'bg-emerald-600/25 text-emerald-300 border border-emerald-500/30' : 'text-zinc-400'
               }`}
             >
@@ -196,7 +283,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             <button
               type="button"
               onClick={() => { setMode('recover'); setError(''); }}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
+              className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all cursor-pointer ${
                 mode === 'recover' ? 'bg-emerald-600/25 text-emerald-300 border border-emerald-500/30' : 'text-zinc-400'
               }`}
             >
@@ -204,14 +291,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             </button>
           </div>
 
-          {/* IA Bomba Protection Banner */}
-          <div className="bg-emerald-950/40 border border-emerald-800/40 rounded-xl p-2.5 mb-3 text-[11px] text-emerald-200 space-y-1">
-            <div className="flex items-center gap-1.5 font-semibold text-emerald-400">
-              <Sparkles className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-              <span>Base de Datos protegida por IA Bomba</span>
+          {/* IA Bomba Protection Banner + Hardware Audit Link */}
+          <div className="bg-emerald-950/40 border border-emerald-800/40 rounded-xl p-2.5 mb-3 text-[11px] text-emerald-200 space-y-1.5">
+            <div className="flex items-center justify-between font-semibold text-emerald-400">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                <span>Base de Datos .jpgduocauantomic+</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAuditModal(true)}
+                className="text-[10px] text-emerald-400 hover:text-emerald-300 font-mono underline flex items-center gap-0.5 cursor-pointer"
+              >
+                <Cpu className="w-3 h-3" /> Auditoría Android
+              </button>
             </div>
             <p className="text-zinc-300 text-[10px] leading-tight">
-              Solo esta APK la consulta con tu ID y Key. Si se intenta descargar o vulnerar fuera de la app, toda la información se autodestruye.
+              Solo esta APK la consulta con tu ID y Key. Si se intenta descargar o vulnerar fuera de la app, toda la información se autodestruye en RAM.
             </p>
           </div>
 
@@ -219,14 +315,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             {mode === 'register' && (
               <div>
                 <label className="block text-[11px] font-mono uppercase text-emerald-400 mb-0.5">
-                  Nombre de Usuario Único (No repetible)
+                  Nombre de Usuario Único (Espacio en blanco para tu nuevo alias)
                 </label>
                 <input
                   type="text"
                   value={userName}
                   onChange={(e) => setUserName(e.target.value)}
                   className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-xs"
-                  placeholder="Ej: Jo Cervantes"
+                  placeholder="Ingresa tu nombre de usuario..."
                   required
                 />
                 <span className="text-[10px] text-zinc-400 block mt-0.5">
@@ -238,21 +334,79 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             <div>
               <div className="flex justify-between items-center mb-0.5">
                 <label className="text-[11px] font-mono uppercase text-emerald-400">
-                  ID Usuario (11 Dígitos)
+                  ID Usuario (11 Dígitos Únicos)
                 </label>
-                <span className="text-[10px] font-mono text-zinc-500">
-                  {userIdInput.length}/11
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={renewFreshIdentity}
+                    className="text-[10px] text-emerald-400 hover:text-emerald-300 font-mono flex items-center gap-0.5 underline cursor-pointer"
+                    title="Generar otro ID aleatorio para nuevo APK"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" /> Renovar ID
+                  </button>
+                  <span className="text-[10px] font-mono text-zinc-500">
+                    {userIdInput.length}/11
+                  </span>
+                </div>
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={userIdInput}
+                  onChange={handleIdChange}
+                  maxLength={11}
+                  className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 pr-10 text-emerald-300 font-mono text-sm tracking-widest focus:outline-none focus:border-emerald-500"
+                  placeholder="00000000000"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={renewFreshIdentity}
+                  className="absolute right-2 top-2 p-1 text-emerald-400 hover:text-white rounded-lg hover:bg-emerald-950 transition-colors cursor-pointer"
+                  title="Renovar ID para nuevo APK"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Credenciales Criptográficas E2EE Generadas en el Dispositivo */}
+            <div className="bg-[#070e0a] border border-emerald-900/60 rounded-xl p-2.5 space-y-1.5 font-mono text-[10px]">
+              <div className="flex items-center justify-between text-emerald-400 font-semibold text-[10.5px]">
+                <span className="flex items-center gap-1">
+                  <Shield className="w-3 h-3 text-emerald-400" /> Cifrado E2EE Soberano
+                </span>
+                <span className="text-[9px] bg-emerald-950 text-emerald-300 border border-emerald-800/80 px-1.5 py-0.2 rounded">
+                  ECDH P-256 + AES-GCM
                 </span>
               </div>
-              <input
-                type="text"
-                value={userIdInput}
-                onChange={handleIdChange}
-                maxLength={11}
-                className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 text-emerald-300 font-mono text-sm tracking-widest focus:outline-none focus:border-emerald-500"
-                placeholder="00000000000"
-                required
-              />
+              <div className="space-y-1 text-zinc-300">
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400 flex items-center gap-1">
+                    <KeyRound className="w-2.5 h-2.5 text-emerald-400" /> Clave Pública:
+                  </span>
+                  <span className="text-emerald-300 text-[9.5px]">
+                    {e2eeInfo ? e2eeInfo.publicKeyFingerprint : 'Generando en hardware...'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400 flex items-center gap-1">
+                    <Lock className="w-2.5 h-2.5 text-emerald-400" /> Clave Privada:
+                  </span>
+                  <span className="text-emerald-400 font-bold text-[9px] bg-emerald-950/60 px-1 rounded">
+                    Sellada en APK (No exportable)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400 flex items-center gap-1">
+                    <Network className="w-2.5 h-2.5 text-emerald-400" /> Servidor DuckDNS:
+                  </span>
+                  <span className="text-emerald-300 text-[9px]">
+                    chat-relay.duckdns.org (Cero Conocimiento)
+                  </span>
+                </div>
+              </div>
             </div>
 
             {mode === 'register' && (
@@ -366,6 +520,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
           <span>Almacenamiento en tu celular • Cero envíos a servidores externos</span>
         </div>
       </div>
+
+      {/* Android Audit & Permissions Modal */}
+      {showAuditModal && (
+        <AndroidAuditPermissionsModal onClose={() => setShowAuditModal(false)} />
+      )}
     </div>
   );
 };

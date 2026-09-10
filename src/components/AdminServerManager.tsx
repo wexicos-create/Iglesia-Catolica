@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Server, Globe, HardDrive, Cpu, Plus, ExternalLink, Copy, 
   Trash2, X, Check, Code, ShieldCheck, RefreshCw, Eye, Sparkles, Database, Layers, Network, Users, Ban, ShieldAlert,
-  DollarSign, Key, PauseCircle, PlayCircle, ShoppingBag, Tag, CheckCircle2, AlertCircle
+  DollarSign, Key, PauseCircle, PlayCircle, ShoppingBag, Tag, CheckCircle2, AlertCircle, Shield
 } from 'lucide-react';
 import { 
   HostedProject, getHostedProjects, deployProjectToSwarm, 
@@ -12,13 +12,19 @@ import {
 } from '../utils/swarmServer';
 import { getGeneralReports, GeneralReport, dismissReports, authorizeAdminAction } from '../utils/reportsRegistry';
 import { tricuanticoEncrypt } from '../utils/cryptoEngine';
+import { QuantumJpgMonitor } from './admin/QuantumJpgMonitor';
+import { HostingPlansManager } from './admin/HostingPlansManager';
+import { InvitationsManager } from './admin/InvitationsManager';
+import { CommunityInfraControls } from './admin/CommunityInfraControls';
+import { NodeJsServerBackendManager } from './admin/NodeJsServerBackendManager';
 
 interface AdminServerManagerProps {
   onClose: () => void;
 }
 
 export const AdminServerManager: React.FC<AdminServerManagerProps> = ({ onClose }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'infrastructure' | 'hosting' | 'ram_db' | 'projects' | 'users'>('infrastructure');
+  const [activeSubTab, setActiveSubTab] = useState<'server_node' | 'infrastructure' | 'plans' | 'invitations' | 'community' | 'hosting' | 'ram_db' | 'projects' | 'users'>('server_node');
+  const [selectedPlanForInvite, setSelectedPlanForInvite] = useState<HostingPlan | null>(null);
   
   const [projects, setProjects] = useState<HostedProject[]>(() => getHostedProjects());
   const [hostingAccounts, setHostingAccounts] = useState<HostingAccount[]>(() => getHostingAccounts());
@@ -124,6 +130,18 @@ export const AdminServerManager: React.FC<AdminServerManagerProps> = ({ onClose 
         {/* Navigation Tabs Bar */}
         <div className="px-4 py-2.5 bg-[#080d0a] border-b border-emerald-950 flex items-center gap-2 overflow-x-auto">
           <button
+            onClick={() => setActiveSubTab('server_node')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
+              activeSubTab === 'server_node' 
+                ? 'bg-emerald-500 text-black font-bold shadow-[0_0_10px_rgba(16,185,129,0.3)]' 
+                : 'bg-[#0f1712] text-zinc-400 hover:text-white border border-emerald-950'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            <span>Servidor Node.js (IP 187.190.179.230)</span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab('infrastructure')}
             className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
               activeSubTab === 'infrastructure' 
@@ -132,7 +150,43 @@ export const AdminServerManager: React.FC<AdminServerManagerProps> = ({ onClose 
             }`}
           >
             <Cpu className="w-3.5 h-3.5" />
-            <span>Infraestructura & RAM</span>
+            <span>JPG Cuántica (1M GB)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('plans')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
+              activeSubTab === 'plans' 
+                ? 'bg-emerald-600 text-black font-bold shadow' 
+                : 'bg-[#0f1712] text-zinc-400 hover:text-white border border-emerald-950'
+            }`}
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>Planes de Renta</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('invitations')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
+              activeSubTab === 'invitations' 
+                ? 'bg-emerald-600 text-black font-bold shadow' 
+                : 'bg-[#0f1712] text-zinc-400 hover:text-white border border-emerald-950'
+            }`}
+          >
+            <Key className="w-3.5 h-3.5" />
+            <span>Links Invitación HTTPS</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('community')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
+              activeSubTab === 'community' 
+                ? 'bg-emerald-600 text-black font-bold shadow' 
+                : 'bg-[#0f1712] text-zinc-400 hover:text-white border border-emerald-950'
+            }`}
+          >
+            <Network className="w-3.5 h-3.5" />
+            <span>Infraestructura Libre</span>
           </button>
 
           <button
@@ -144,7 +198,7 @@ export const AdminServerManager: React.FC<AdminServerManagerProps> = ({ onClose 
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>Hosting & Accesos ({hostingAccounts.length})</span>
+            <span>Hosting Asignado ({hostingAccounts.length})</span>
           </button>
 
           <button
@@ -180,126 +234,47 @@ export const AdminServerManager: React.FC<AdminServerManagerProps> = ({ onClose 
             }`}
           >
             <Users className="w-3.5 h-3.5" />
-            <span>Gestión de Nodos & Usuarios</span>
+            <span>Control Nodos & Usuarios</span>
           </button>
         </div>
 
         {/* Body Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
           
-          {/* TAB 1: INFRASTRUCTURE & RAM */}
+          {/* TAB 0: CENTRAL NODE.JS SOVEREIGN SERVER & HIDDEN VAULT */}
+          {activeSubTab === 'server_node' && (
+            <NodeJsServerBackendManager />
+          )}
+
+          {/* TAB 1: QUANTUM JPG MONITOR & INFRASTRUCTURE */}
           {activeSubTab === 'infrastructure' && (
-            <div className="space-y-4 animate-in fade-in">
-              {/* Device as Server & Cloud Isolation Banner */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950 via-[#0a120d] to-[#080e0a] border border-emerald-500/50 shadow-xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-500 text-black font-black flex items-center justify-center text-xs shadow-md">
-                      APK
-                    </div>
-                    <div>
-                      <h3 className="text-white font-bold text-xs flex items-center gap-2">
-                        Dispositivo Convertido en Servidor Maestro Local
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[9px] font-mono border border-emerald-500/40">
-                          Aislamiento Nube Activo
-                        </span>
-                      </h3>
-                      <p className="text-[10px] text-zinc-400 font-mono">
-                        Servidor local P2P indestructible e impenetrable controlado 100% desde la APK
-                      </p>
-                    </div>
-                  </div>
-                </div>
+            <QuantumJpgMonitor 
+              onAssignHosting={() => setActiveSubTab('invitations')}
+              onDeployProject={() => setShowDeployModal(true)}
+            />
+          )}
 
-                <div className="p-3 rounded-xl bg-[#050806] border border-emerald-900/60 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="text-zinc-200 font-bold font-mono">Matriz JPG Cuántica (.produplicuantistomica+)</span>
-                  </div>
-                  <span className="text-emerald-400 font-mono font-bold text-[11px] bg-emerald-950 px-2 py-1 rounded border border-emerald-800">
-                    1.000.000 GB Cuánticos (Peso APK: 1 GB)
-                  </span>
-                </div>
-              </div>
+          {/* TAB 2: HOSTING RENTAL PLANS CONFIGURATION */}
+          {activeSubTab === 'plans' && (
+            <HostingPlansManager
+              onGenerateInvitationWithPlan={(plan) => {
+                setSelectedPlanForInvite(plan);
+                setActiveSubTab('invitations');
+              }}
+            />
+          )}
 
-              {/* RAM Allocation Pool Card */}
-              <div className="p-4 rounded-2xl bg-[#080d0a] border border-emerald-900/60 space-y-3 shadow-lg">
-                <div className="flex items-center justify-between">
-                  <span className="text-white font-bold flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-emerald-400" />
-                    Búfer en RAM Cuántica (In-Memory Dispositivo)
-                  </span>
-                  <span className="font-mono text-emerald-300 font-bold text-xs bg-emerald-950 px-2 py-0.5 rounded-lg border border-emerald-800">
-                    14.2 GB / 1.000.000 GB RAM
-                  </span>
-                </div>
+          {/* TAB 3: PERSONALIZED INVITATION LINKS GENERATOR */}
+          {activeSubTab === 'invitations' && (
+            <InvitationsManager
+              initialPlan={selectedPlanForInvite}
+              onClearInitialPlan={() => setSelectedPlanForInvite(null)}
+            />
+          )}
 
-                {/* RAM bar */}
-                <div className="w-full bg-[#050806] rounded-full h-3 border border-emerald-950 overflow-hidden">
-                  <div className="bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 h-full w-[12%]" />
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 pt-1 text-[11px] font-mono">
-                  <div className="p-2.5 rounded-xl bg-[#050806] border border-emerald-950 text-center">
-                    <span className="text-zinc-500 block mb-0.5">Capacidad Esteganográfica</span>
-                    <span className="text-emerald-400 font-bold">1.000.000 GB</span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-[#050806] border border-emerald-950 text-center">
-                    <span className="text-zinc-500 block mb-0.5">Nodos P2P Mesh</span>
-                    <span className="text-white font-bold">{INITIAL_SWARM_STATS.activeNodesCount.toLocaleString()}</span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-[#050806] border border-emerald-950 text-center">
-                    <span className="text-zinc-500 block mb-0.5">Cifrado Dispositivo</span>
-                    <span className="text-teal-400 font-bold">4096-BIT JPG</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Quick Actions */}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => setShowHostingModal(true)}
-                  className="p-4 rounded-2xl bg-gradient-to-br from-emerald-950/60 to-[#0c1410] border border-emerald-800/80 hover:border-emerald-500 transition-all flex items-center gap-3 text-left cursor-pointer group"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-emerald-900/50 border border-emerald-600 flex items-center justify-center text-emerald-300 group-hover:scale-105 transition-transform">
-                    <Plus className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-white text-xs">Asignar Nuevo Hosting</h4>
-                    <p className="text-[10px] text-zinc-400 font-mono mt-0.5">Crear acceso en RAM & IP dedicada</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setShowDeployModal(true)}
-                  className="p-4 rounded-2xl bg-gradient-to-br from-teal-950/60 to-[#0c1410] border border-teal-800/80 hover:border-teal-500 transition-all flex items-center gap-3 text-left cursor-pointer group"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-teal-900/50 border border-teal-600 flex items-center justify-center text-teal-300 group-hover:scale-105 transition-transform">
-                    <Globe className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-white text-xs">Desplegar Sub-servidor</h4>
-                    <p className="text-[10px] text-zinc-400 font-mono mt-0.5">Montar app web esteganográfica</p>
-                  </div>
-                </button>
-              </div>
-
-              {/* Server Logs & Diagnostics */}
-              <div className="p-4 rounded-2xl bg-[#080d0a] border border-emerald-950 space-y-2">
-                <div className="flex items-center justify-between text-zinc-400 font-mono text-[11px]">
-                  <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
-                    <ShieldCheck className="w-4 h-4" />
-                    Diagnóstico de Enjambre Cuántico
-                  </span>
-                  <span>Estado: Operativo</span>
-                </div>
-                <div className="p-3 rounded-xl bg-[#050806] border border-emerald-950 font-mono text-[10px] text-zinc-300 space-y-1">
-                  <div>[OK] Sincronización P2P en RAM completada (14,892 nodos activos).</div>
-                  <div>[OK] Base de datos en memoria sincronizada con búfer esteganográfico .jpg.</div>
-                  <div>[OK] Asignación dinámica de IPs y subdominios .chattoj.net activa.</div>
-                </div>
-              </div>
-            </div>
+          {/* TAB 4: UNRESTRICTED COMMUNITY INFRASTRUCTURE CONTROLS */}
+          {activeSubTab === 'community' && (
+            <CommunityInfraControls />
           )}
 
           {/* TAB 2: HOSTING & CLOUD ACCESS PANEL */}
@@ -496,11 +471,11 @@ export const AdminServerManager: React.FC<AdminServerManagerProps> = ({ onClose 
                       <div className="flex items-center justify-between pt-1 border-t border-emerald-950 text-[10px] font-mono text-zinc-400">
                         <span>Creado: {acc.createdAt}</span>
                         <button
-                          onClick={() => handleCopy(`http://${acc.domain}`)}
+                          onClick={() => handleCopy(`https://${acc.domain}`)}
                           className="text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
                         >
                           <Copy className="w-3 h-3" />
-                          {copiedUrl === `http://${acc.domain}` ? '¡Copiado!' : 'Copiar URL Dominio'}
+                          {copiedUrl === `https://${acc.domain}` ? '¡Copiado!' : 'Copiar URL Dominio (HTTPS)'}
                         </button>
                       </div>
                     </div>
