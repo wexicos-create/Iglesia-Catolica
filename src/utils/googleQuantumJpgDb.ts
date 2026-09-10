@@ -267,6 +267,21 @@ export async function publishBlindedUsernameToMesh(username: string, sovereignId
   }
 }
 
+export async function publishBlindedUserIdToMesh(userId: string): Promise<void> {
+  const cleanId = userId.replace(/\D/g, '').slice(0, 11);
+  const blindedIdHash = await hashString('ID_BLINDED_' + cleanId + '_' + NETWORK_BLIND_SALT);
+  const mesh = getBlindedUserMesh();
+
+  if (!mesh.some(m => m.blindedHash === blindedIdHash)) {
+    mesh.push({
+      blindedHash: blindedIdHash,
+      sovereignIdPrefix: cleanId.slice(0, 4) + '***',
+      timestamp: Date.now()
+    });
+    localStorage.setItem(BLINDED_USER_MESH_KEY, JSON.stringify(mesh));
+  }
+}
+
 export function getBlindedUserMesh(): Array<{ blindedHash: string; sovereignIdPrefix: string; timestamp: number }> {
   try {
     const raw = localStorage.getItem(BLINDED_USER_MESH_KEY);
@@ -278,6 +293,13 @@ export function getBlindedUserMesh(): Array<{ blindedHash: string; sovereignIdPr
 
 export async function checkUsernameInBlindedMesh(username: string): Promise<boolean> {
   const targetHash = await hashString(username.trim().toLowerCase() + NETWORK_BLIND_SALT);
+  const mesh = getBlindedUserMesh();
+  return mesh.some(m => m.blindedHash === targetHash);
+}
+
+export async function checkUserIdInBlindedMesh(userId: string): Promise<boolean> {
+  const cleanId = userId.replace(/\D/g, '').slice(0, 11);
+  const targetHash = await hashString('ID_BLINDED_' + cleanId + '_' + NETWORK_BLIND_SALT);
   const mesh = getBlindedUserMesh();
   return mesh.some(m => m.blindedHash === targetHash);
 }

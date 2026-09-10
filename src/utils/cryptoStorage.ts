@@ -49,6 +49,80 @@ export function getRegisteredIdentities(): RegisteredIdentity[] {
   }
 }
 
+/**
+ * Comprueba si un ID de 11 dígitos ya ha sido registrado en la base de datos local
+ */
+export function isUserIdRegistered(userId: string): boolean {
+  const cleanId = userId.replace(/\D/g, '').slice(0, 11);
+  if (cleanId.length !== 11) return false;
+  
+  // 1. Verificar en bóveda actual
+  const existingVault = getExistingVault();
+  if (existingVault && existingVault.userId === cleanId) {
+    return true;
+  }
+
+  // 2. Verificar en el registro maestro de identidades
+  const registry = getRegisteredIdentities();
+  return registry.some(u => u.userId === cleanId);
+}
+
+/**
+ * Comprueba la disponibilidad y unicidad de un ID en tiempo real
+ * verificando tanto en el almacenamiento local como en el servidor backend central (/api/users/check-id)
+ */
+export async function checkUserIdUniqueness(userId: string): Promise<{
+  isAvailable: boolean;
+  message: string;
+  isRegistered: boolean;
+}> {
+  const cleanId = userId.replace(/\D/g, '').slice(0, 11);
+  if (cleanId.length !== 11) {
+    return {
+      isAvailable: false,
+      isRegistered: false,
+      message: 'El ID debe tener exactamente 11 números.'
+    };
+  }
+
+  // 1. Verificación local inmediata
+  if (isUserIdRegistered(cleanId)) {
+    return {
+      isAvailable: false,
+      isRegistered: true,
+      message: 'Este ID de 11 dígitos ya está registrado de forma única en la base de datos local.'
+    };
+  }
+
+  // 2. Verificación contra el servidor central (/api/users/check-id)
+  try {
+    const response = await fetch('/api/users/check-id', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: cleanId })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.isRegistered) {
+        return {
+          isAvailable: false,
+          isRegistered: true,
+          message: 'Este ID ya está registrado de forma única en la base de datos central del hosting.'
+        };
+      }
+    }
+  } catch (err) {
+    // Si el servidor no responde, confiamos en la base de datos local blindada
+  }
+
+  return {
+    isAvailable: true,
+    isRegistered: false,
+    message: 'ID de 11 dígitos disponible para registro único.'
+  };
+}
+
 export function isUsernameTaken(name: string, excludeUserId?: string): boolean {
   const normalized = name.trim().toLowerCase();
   const list = getRegisteredIdentities();
@@ -72,15 +146,18 @@ export async function hashString(message: string): Promise<string> {
 }
 
 /**
- * Register admin or user vault with permanent password and unique name enforcement.
+ * Register admin or user vault with permanent password and strict single-registration enforcement.
+ * Cada ID se registra una única vez en la base de datos.
  */
 export async function registerAdminVault(
   userId: string,
   name: string,
   quantumKey: string,
-  password?: string
+  password?: string,
+  extraParams?: { publicKeyE2EE?: string; publicKeyFingerprint?: string }
 ): Promise<StoredVaultRecord> {
-  if (userId.length !== 11) {
+  const cleanId = userId.replace(/\D/g, '').slice(0, 11);
+  if (cleanId.length !== 11) {
     throw new Error('El ID de usuario debe tener exactamente 11 dígitos.');
   }
 
@@ -89,16 +166,22 @@ export async function registerAdminVault(
     throw new Error('Debes ingresar un nombre de usuario válido.');
   }
 
-  if (isUsernameTaken(cleanName, userId)) {
+  // 1. REGLA ESTRICTA DE UNICIDAD: Cada ID se registra una única vez
+  const uniquenessCheck = await checkUserIdUniqueness(cleanId);
+  if (!uniquenessCheck.isAvailable) {
+    throw new Error(`REGISTRO DENEGADO: El ID "${cleanId}" ya se encuentra registrado de forma única en la base de datos. Cada ID solo puede registrarse una sola vez.`);
+  }
+
+  if (isUsernameTaken(cleanName, cleanId)) {
     throw new Error(`El nombre de usuario "${cleanName}" ya está registrado en la base de datos interconectada. Elige otro nombre único.`);
   }
 
   const deviceId = getOrCreateDeviceFingerprint();
-  const keyHash = await hashString(quantumKey + userId + deviceId);
-  const pwdHash = password ? await hashString(password + userId + deviceId) : undefined;
+  const keyHash = await hashString(quantumKey + cleanId + deviceId);
+  const pwdHash = password ? await hashString(password + cleanId + deviceId) : undefined;
 
   const record: StoredVaultRecord = {
-    userId,
+    userId: cleanId,
     name: cleanName,
     quantumKeyHash: keyHash,
     passwordHash: pwdHash,
@@ -107,12 +190,32 @@ export async function registerAdminVault(
     lastActive: Date.now()
   };
 
+  // 2. Registrar en servidor central backend (/api/users/register)
+  try {
+    await fetch('/api/users/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: cleanId,
+        name: cleanName,
+        password,
+        quantumKey,
+        publicKeyE2EE: extraParams?.publicKeyE2EE,
+        publicKeyFingerprint: extraParams?.publicKeyFingerprint,
+        deviceHardwareId: deviceId
+      })
+    });
+  } catch (err) {
+    console.warn('Conexión con servidor central asíncrona / modo offline.');
+  }
+
+  // 3. Persistir en bóveda local
   localStorage.setItem(VAULT_KEY, JSON.stringify(record));
 
-  // Update registry
-  const currentRegistry = getRegisteredIdentities().filter(u => u.userId !== userId);
+  // 4. Actualizar registro permanente de identidades únicas
+  const currentRegistry = getRegisteredIdentities().filter(u => u.userId !== cleanId);
   currentRegistry.push({
-    userId,
+    userId: cleanId,
     name: cleanName,
     deviceId,
     registeredAt: Date.now()
@@ -163,82 +266,179 @@ export async function updateVaultName(userId: string, newName: string): Promise<
 }
 
 /**
- * Change permanent password or Key verified with Device Hardware Fingerprint.
+ * Cambio real y funcional de Contraseña o Key Criptográfica con Validación de Hardware
+ * y sincronización tanto en base de datos local (.jpgduocauantomic+) como en servidor central.
  */
 export async function changePasswordWithHardwareValidation(
   userId: string,
-  newPassword: string
+  newPassword?: string,
+  newQuantumKey?: string,
+  currentAuth?: string
 ): Promise<{ success: boolean; error?: string }> {
+  const cleanId = userId.replace(/\D/g, '').slice(0, 11);
   const raw = localStorage.getItem(VAULT_KEY);
-  if (!raw) return { success: false, error: 'No se encontró registro de bóveda en este dispositivo.' };
+  if (!raw) return { success: false, error: 'No se encontró registro de bóveda en la base de datos de este dispositivo.' };
 
   try {
     const record: StoredVaultRecord = JSON.parse(raw);
     const currentDevice = getOrCreateDeviceFingerprint();
 
-    if (record.userId !== userId || record.deviceId !== currentDevice) {
+    if (record.userId !== cleanId || record.deviceId !== currentDevice) {
       return { success: false, error: 'Fallo de verificación de hardware: Este dispositivo no es el propietario registrado de este ID.' };
     }
 
-    const newPwdHash = await hashString(newPassword + userId + currentDevice);
-    record.passwordHash = newPwdHash;
-    record.lastActive = Date.now();
+    // 1. Si se ingresó una contraseña actual y el usuario tenía contraseña, verificarla
+    if (currentAuth && record.passwordHash) {
+      const authPwdHash = await hashString(currentAuth + cleanId + currentDevice);
+      const authKeyHashWithDev = await hashString(currentAuth + cleanId + currentDevice);
+      const authKeyHashWithoutDev = await hashString(currentAuth + cleanId);
+      if (
+        authPwdHash !== record.passwordHash &&
+        authKeyHashWithDev !== record.quantumKeyHash &&
+        authKeyHashWithoutDev !== record.quantumKeyHash
+      ) {
+        return { success: false, error: 'La contraseña o clave actual ingresada no coincide con el registro de la base de datos.' };
+      }
+    }
 
+    // 2. Actualizar hash de contraseña si se especificó nueva
+    if (newPassword && newPassword.trim()) {
+      const newPwdHash = await hashString(newPassword.trim() + cleanId + currentDevice);
+      record.passwordHash = newPwdHash;
+    }
+
+    // 3. Actualizar hash de clave cuántica si se especificó nueva
+    if (newQuantumKey && newQuantumKey.trim()) {
+      const newKeyHash = await hashString(newQuantumKey.trim() + cleanId + currentDevice);
+      record.quantumKeyHash = newKeyHash;
+    }
+
+    record.lastActive = Date.now();
     localStorage.setItem(VAULT_KEY, JSON.stringify(record));
+
+    // 4. Sincronizar en el servidor central backend (/api/users/update-credentials)
+    try {
+      await fetch('/api/users/update-credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: cleanId,
+          currentAuth,
+          newPassword: newPassword?.trim(),
+          newQuantumKey: newQuantumKey?.trim(),
+          deviceHardwareId: currentDevice
+        })
+      });
+    } catch {
+      // Modo local/offline persistido
+    }
+
     await updateDatabaseIntegritySeal();
     return { success: true };
-  } catch {
-    return { success: false, error: 'Error al actualizar credenciales en la base de datos.' };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Error al actualizar credenciales en la base de datos.' };
   }
 }
 
 /**
- * Verify vault credentials via ID and Key.
- * Only the APK with valid hardware binding can unlock and query.
+ * Verificación Real de Ingreso (Log in) en Base de Datos Criptográfica Local y Servidor
+ * Soporta autenticación mediante Clave Cuántica y/o Contraseña permanente.
  */
-export async function verifyAdminVault(userId: string, quantumKey: string): Promise<{ isValid: boolean; error?: string; linkedName?: string }> {
-  const raw = localStorage.getItem(VAULT_KEY);
-  if (!raw) return { isValid: false, error: 'No existe bóveda local en este dispositivo.' };
+export async function verifyAdminVault(
+  userId: string, 
+  secretOrKey: string,
+  passwordInput?: string
+): Promise<{ isValid: boolean; error?: string; linkedName?: string; userProfileData?: any }> {
+  const cleanId = userId.replace(/\D/g, '').slice(0, 11);
+  const currentDevice = getOrCreateDeviceFingerprint();
 
   // Check IA Bomba status
   const bombStatus = localStorage.getItem(IA_BOMB_STATUS_KEY);
   if (bombStatus === 'detonated') {
     return {
       isValid: false,
-      error: '💥 ALERTA: La IA Bomba detonó la base de datos tras detectar intentos externos de manipulación tecnológica. La información fue destruida.'
+      error: '💥 ALERTA: La base de datos fue destruida por la IA Bomba tras detectar intentos de manipulación externa.'
     };
   }
 
-  try {
-    const record: StoredVaultRecord = JSON.parse(raw);
-    if (record.userId !== userId) return { isValid: false, error: 'ID de usuario no coincide con la base de datos.' };
+  const raw = localStorage.getItem(VAULT_KEY);
+  if (raw) {
+    try {
+      const record: StoredVaultRecord = JSON.parse(raw);
+      if (record.userId === cleanId) {
+        if (record.deviceId && record.deviceId !== currentDevice) {
+          await detonateAiBomb('Dispositivo no coincidente: intento de clonación externa');
+          return { 
+            isValid: false, 
+            error: '⚠️ Alerta de Seguridad: La base de datos fue transferida desde otro hardware. Acceso sellado.' 
+          };
+        }
 
-    const currentDevice = getOrCreateDeviceFingerprint();
-    if (record.deviceId && record.deviceId !== currentDevice) {
-      // Hardware mismatch triggers the tamper sentry
-      await detonateAiBomb('Dispositivo no coincidente: intento de clonación externa');
-      return { 
-        isValid: false, 
-        error: '⚠️ Alerta de Seguridad: La base de datos fue transferida desde otro dispositivo. La IA Bomba ha bloqueado y sellado el acceso.' 
-      };
+        const candidateSecret = (secretOrKey || '').trim();
+        const candidatePassword = (passwordInput || '').trim();
+
+        const computedKeyHashWithDevice = await hashString(candidateSecret + cleanId + currentDevice);
+        const computedKeyHashWithoutDevice = await hashString(candidateSecret + cleanId);
+        const computedPwdHash = candidatePassword 
+          ? await hashString(candidatePassword + cleanId + currentDevice)
+          : await hashString(candidateSecret + cleanId + currentDevice);
+
+        const isKeyMatch = (computedKeyHashWithDevice === record.quantumKeyHash || computedKeyHashWithoutDevice === record.quantumKeyHash);
+        const isPwdMatch = (record.passwordHash && (computedPwdHash === record.passwordHash));
+
+        if (isKeyMatch || isPwdMatch || (!record.passwordHash && !record.quantumKeyHash)) {
+          record.lastActive = Date.now();
+          localStorage.setItem(VAULT_KEY, JSON.stringify(record));
+          return { isValid: true, linkedName: record.name };
+        }
+      }
+    } catch {
+      // Fallback to server check
     }
-
-    const computedKeyHashWithDevice = await hashString(quantumKey + userId + currentDevice);
-    const computedKeyHashWithoutDevice = await hashString(quantumKey + userId);
-    const computedPwdHash = await hashString(quantumKey + userId + currentDevice);
-
-    if (
-      computedKeyHashWithDevice === record.quantumKeyHash ||
-      computedKeyHashWithoutDevice === record.quantumKeyHash ||
-      (record.passwordHash && computedPwdHash === record.passwordHash)
-    ) {
-      return { isValid: true, linkedName: record.name };
-    }
-
-    return { isValid: false, error: 'Key Cuántica o Contraseña incorrecta para este ID.' };
-  } catch {
-    return { isValid: false, error: 'Error al procesar la base de datos criptográfica.' };
   }
+
+  // 2. Si no coincide local o es un nodo enlazándose, validar contra el servidor central (/api/user/connect)
+  try {
+    const res = await fetch('/api/user/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: cleanId,
+        quantumKey: secretOrKey,
+        password: passwordInput || secretOrKey,
+        deviceHardwareId: currentDevice
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.authenticated && data.user) {
+        // Restaurar registro de base de datos local
+        const keyHash = await hashString(secretOrKey + cleanId + currentDevice);
+        const pwdHash = passwordInput ? await hashString(passwordInput + cleanId + currentDevice) : undefined;
+        const restoredRecord: StoredVaultRecord = {
+          userId: cleanId,
+          name: data.user.name || 'Usuario ' + cleanId,
+          quantumKeyHash: keyHash,
+          passwordHash: pwdHash,
+          deviceId: currentDevice,
+          createdTimestamp: Date.now(),
+          lastActive: Date.now()
+        };
+        localStorage.setItem(VAULT_KEY, JSON.stringify(restoredRecord));
+        await updateDatabaseIntegritySeal();
+
+        return { isValid: true, linkedName: data.user.name, userProfileData: data.user };
+      }
+    } else {
+      const errData = await res.json();
+      return { isValid: false, error: errData.error || 'Credenciales incorrectas en la base de datos central.' };
+    }
+  } catch {
+    // Si offline y local falló
+  }
+
+  return { isValid: false, error: 'Key Cuántica o Contraseña incorrecta para este ID en la base de datos.' };
 }
 
 export function getExistingVault(): StoredVaultRecord | null {

@@ -1,6 +1,6 @@
 {
-  "name": "Chattoj",
-  "description": "Ultra WhatsApp remix with 100% offline Llama AI, quantum key authentication, and decentralized private communication.",
+  "name": "ChattOJ - Mensajería Soberana & Hosting P2P",
+  "description": "WhatsApp Dark Premium con Web Push en segundo plano, soporte offline-first, nodos soberanos y llamadas directas en silicio.",
   "requestFramePermissions": ["camera", "microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -387,13 +387,178 @@ app.post('/api/admin/setup', (req, res) => {
   }
 });
 
-// 3. RUTA PARA LA FUTURA APK DE USUARIO (/api/user/connect)
-// Deja programada y lista esta ruta para recibir la conexión de las aplicaciones de los usuarios,
-// enlazándose en automático validando su ID y su Key contra la base de datos que el Admin preparó.
+// 3. RUTA PARA VERIFICAR UNICIDAD DE ID EN LA BASE DE DATOS (/api/users/check-id)
+// Cada ID se registra una única vez. Esta función real comprueba en la base de datos si ya existe.
+app.post('/api/users/check-id', (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId || String(userId).replace(/\D/g, '').length !== 11) {
+    return res.status(400).json({
+      success: false,
+      isAvailable: false,
+      error: 'El ID a verificar debe tener exactamente 11 números.'
+    });
+  }
+
+  const cleanId = String(userId).replace(/\D/g, '').slice(0, 11);
+  const exists = activeVault.users.some(u => u.userId === cleanId);
+
+  return res.json({
+    success: true,
+    userId: cleanId,
+    isRegistered: exists,
+    isAvailable: !exists,
+    message: exists
+      ? 'Este ID ya está registrado de forma única en la base de datos central.'
+      : 'ID de 11 dígitos disponible para registro único.'
+  });
+});
+
+// 4. RUTA DE REGISTRO DIRECTO CON ENFORCEMENT DE UNICIDAD (/api/users/register)
+// Cada ID se registra una única vez en la base de datos. Si ya existe, se rechaza terminantemente.
+app.post('/api/users/register', (req, res) => {
+  const { userId, name, password, quantumKey, publicKeyE2EE, publicKeyFingerprint, deviceHardwareId } = req.body || {};
+
+  if (!userId || String(userId).replace(/\D/g, '').length !== 11) {
+    return res.status(400).json({
+      success: false,
+      error: 'ID INVÁLIDO: El identificador debe constar de exactamente 11 números.'
+    });
+  }
+
+  const cleanId = String(userId).replace(/\D/g, '').slice(0, 11);
+  const cleanName = String(name || '').trim();
+
+  if (!cleanName) {
+    return res.status(400).json({
+      success: false,
+      error: 'NOMBRE REQUERIDO: Debes proporcionar un nombre de usuario.'
+    });
+  }
+
+  // 1. REGLA ESTRICTA: Cada ID se registra una única vez en la base de datos
+  const idAlreadyExists = activeVault.users.some(u => u.userId === cleanId);
+  if (idAlreadyExists) {
+    return res.status(409).json({
+      success: false,
+      error: `REGISTRO DENEGADO: El ID "${cleanId}" ya se encuentra registrado de forma única en la base de datos. No es posible registrar el mismo ID dos veces.`
+    });
+  }
+
+  // 2. Comprobar nombre único
+  const nameAlreadyTaken = activeVault.users.some(u => u.name.toLowerCase() === cleanName.toLowerCase());
+  if (nameAlreadyTaken) {
+    return res.status(409).json({
+      success: false,
+      error: `REGISTRO DENEGADO: El nombre "${cleanName}" ya está reclamado por otro usuario en la base de datos.`
+    });
+  }
+
+  // 3. Crear registro en la base de datos oculta
+  const salt = crypto.randomBytes(16).toString('hex');
+  const passwordHash = password ? derivePasswordHash(String(password), salt) : '';
+  const encryptedKey = quantumKey ? encryptWithMasterSecret(String(quantumKey), activeVault.serverMasterSalt) : '';
+
+  const newUser: UserRecord = {
+    userId: cleanId,
+    name: cleanName,
+    passwordHash,
+    salt,
+    encryptedKey,
+    publicKeyE2EE,
+    publicKeyFingerprint,
+    role: activeVault.users.length === 0 ? 'admin' : 'user',
+    createdAt: Date.now(),
+    lastConnectedAt: Date.now()
+  };
+
+  activeVault.users.push(newUser);
+  saveVault(activeVault);
+
+  console.log(`[ChattOJ BD] ID único ${cleanId} (${cleanName}) registrado exitosamente en la base de datos.`);
+
+  return res.status(201).json({
+    success: true,
+    message: `ID ${cleanId} registrado de forma única y permanente en la base de datos central.`,
+    user: {
+      userId: newUser.userId,
+      name: newUser.name,
+      role: newUser.role,
+      publicKeyFingerprint: newUser.publicKeyFingerprint,
+      createdAt: newUser.createdAt
+    }
+  });
+});
+
+// 5. RUTA DE ACTUALIZACIÓN REAL DE CONTRASEÑA O KEY (/api/users/update-credentials)
+// Conecta el mecanismo real de actualización de contraseñas y llaves cuánticas
+app.post('/api/users/update-credentials', (req, res) => {
+  const { userId, currentAuth, newPassword, newQuantumKey, deviceHardwareId } = req.body || {};
+
+  if (!userId || String(userId).replace(/\D/g, '').length !== 11) {
+    return res.status(400).json({
+      success: false,
+      error: 'ID INVÁLIDO: El identificador debe constar de 11 números.'
+    });
+  }
+
+  const cleanId = String(userId).replace(/\D/g, '').slice(0, 11);
+  const userIndex = activeVault.users.findIndex(u => u.userId === cleanId);
+
+  if (userIndex === -1) {
+    return res.status(404).json({
+      success: false,
+      error: 'USUARIO NO ENCONTRADO: El ID no existe en la base de datos.'
+    });
+  }
+
+  const user = activeVault.users[userIndex];
+
+  // Si hay contraseña previa configurada y se envió currentAuth, verificarla
+  if (user.passwordHash && currentAuth) {
+    const computedHash = derivePasswordHash(String(currentAuth), user.salt);
+    if (computedHash !== user.passwordHash) {
+      // Verificar si coincide con la clave cuántica desencriptada
+      const decryptedKey = user.encryptedKey ? decryptWithMasterSecret(user.encryptedKey, activeVault.serverMasterSalt) : null;
+      if (decryptedKey !== String(currentAuth).trim()) {
+        return res.status(401).json({
+          success: false,
+          error: 'AUTENTICACIÓN FALLIDA: Las credenciales actuales no coinciden con la base de datos.'
+        });
+      }
+    }
+  }
+
+  // Actualizar contraseña si se proporciona
+  if (newPassword) {
+    const newSalt = crypto.randomBytes(16).toString('hex');
+    user.salt = newSalt;
+    user.passwordHash = derivePasswordHash(String(newPassword), newSalt);
+  }
+
+  // Actualizar clave cuántica si se proporciona
+  if (newQuantumKey) {
+    user.encryptedKey = encryptWithMasterSecret(String(newQuantumKey), activeVault.serverMasterSalt);
+  }
+
+  user.lastConnectedAt = Date.now();
+  activeVault.users[userIndex] = user;
+  saveVault(activeVault);
+
+  console.log(`[ChattOJ BD] Credenciales actualizadas para ID ${cleanId} en base de datos central.`);
+
+  return res.json({
+    success: true,
+    message: `Credenciales de ID ${cleanId} actualizadas de forma permanente en la base de datos central.`,
+    updatedAt: Date.now()
+  });
+});
+
+// 6. RUTA PARA CONEXIÓN Y LOG IN DE USUARIO (/api/user/connect)
+// Valida en automático ID y Key o Contraseña contra la base de datos central.
 app.post('/api/user/connect', (req, res) => {
   const { userId, quantumKey, password, clientVersion, deviceHardwareId } = req.body || {};
 
-  if (!userId || String(userId).length !== 11) {
+  if (!userId || String(userId).replace(/\D/g, '').length !== 11) {
     return res.status(400).json({
       success: false,
       authenticated: false,
@@ -401,28 +566,45 @@ app.post('/api/user/connect', (req, res) => {
     });
   }
 
-  // Buscar usuario en la base de datos oculta preparada por el Admin
-  const cleanId = String(userId).trim();
+  // Buscar usuario en la base de datos oculta
+  const cleanId = String(userId).replace(/\D/g, '').slice(0, 11);
   const userRecord = activeVault.users.find(u => u.userId === cleanId);
 
   if (!userRecord) {
     return res.status(404).json({
       success: false,
       authenticated: false,
-      error: 'USUARIO NO ENCONTRADO: Este ID de 11 números no ha sido registrado por el Administrador en la base de datos del hosting.'
+      error: 'USUARIO NO ENCONTRADO: Este ID de 11 números no ha sido registrado en la base de datos.'
     });
   }
 
-  // Validación de Contraseña si está configurada
-  if (userRecord.passwordHash && password) {
+  // Validación de Contraseña o Key
+  let isValid = false;
+  if (password && userRecord.passwordHash) {
     const computedHash = derivePasswordHash(String(password), userRecord.salt);
-    if (computedHash !== userRecord.passwordHash) {
-      return res.status(401).json({
-        success: false,
-        authenticated: false,
-        error: 'CONTRASEÑA INCORRECTA: La clave de acceso no coincide con el registro del servidor.'
-      });
+    if (computedHash === userRecord.passwordHash) {
+      isValid = true;
     }
+  }
+
+  if (!isValid && quantumKey && userRecord.encryptedKey) {
+    const decryptedKey = decryptWithMasterSecret(userRecord.encryptedKey, activeVault.serverMasterSalt);
+    if (decryptedKey === String(quantumKey).trim()) {
+      isValid = true;
+    }
+  }
+
+  // Si no tiene password asignado ni encryptedKey (usuario creado en blanco), permitir enlace de dispositivo
+  if (!userRecord.passwordHash && !userRecord.encryptedKey) {
+    isValid = true;
+  }
+
+  if (!isValid) {
+    return res.status(401).json({
+      success: false,
+      authenticated: false,
+      error: 'CREDENCIALES INCORRECTAS: La clave o contraseña no coinciden con el registro en la base de datos.'
+    });
   }
 
   // Actualizar marca de tiempo de última conexión
@@ -435,7 +617,7 @@ app.post('/api/user/connect', (req, res) => {
   return res.json({
     success: true,
     authenticated: true,
-    message: 'CONEXIÓN EXITOSA: Nodo de usuario enlazado con la base de datos central.',
+    message: 'CONEXIÓN Y LOG IN EXITOSO: Nodo autenticado con la base de datos central.',
     user: {
       userId: userRecord.userId,
       name: userRecord.name,

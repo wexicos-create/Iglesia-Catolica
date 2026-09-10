@@ -29,8 +29,24 @@ import { relayE2EEEnvelopeViaDuckDns } from './utils/duckDnsRelay';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    // Al iniciar la aplicación por primera vez / nueva instalación, descartamos cualquier ID previo
+    const isFirstAppLaunch = !sessionStorage.getItem('chattoj_session_active');
+    if (isFirstAppLaunch) {
+      sessionStorage.setItem('chattoj_session_active', 'true');
+      localStorage.removeItem('chattoj_user');
+      localStorage.removeItem('chattoj_temp_auth_id');
+      return null;
+    }
     const saved = localStorage.getItem('chattoj_user');
-    return saved ? JSON.parse(saved) : null;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.userId && parsed.userId.length === 11) {
+          return parsed;
+        }
+      } catch {}
+    }
+    return null;
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('chats');
@@ -162,12 +178,16 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('chattoj_user');
+    localStorage.removeItem('chattoj_temp_auth_id');
     setCurrentUser(null);
     setSelectedChatId(null);
     setActiveTab('chats');
   };
 
   const handlePanicWipe = () => {
+    localStorage.removeItem('chattoj_user');
+    localStorage.removeItem('chattoj_temp_auth_id');
     setCurrentUser(null);
     setChats([]);
     setCallLogs([]);

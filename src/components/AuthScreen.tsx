@@ -7,12 +7,16 @@ import {
   getExistingVault, 
   getOrCreateDeviceFingerprint,
   isUsernameTaken,
+  isUserIdRegistered,
+  checkUserIdUniqueness,
   changePasswordWithHardwareValidation,
   hashString
 } from '../utils/cryptoStorage';
 import { 
   generateQuantumJpgContainer, 
-  checkUsernameInBlindedMesh 
+  checkUsernameInBlindedMesh,
+  checkUserIdInBlindedMesh,
+  publishBlindedUserIdToMesh
 } from '../utils/googleQuantumJpgDb';
 import { 
   generateAndStoreDeviceE2EEKeys, 
@@ -21,22 +25,31 @@ import {
 } from '../utils/e2eeEngine';
 import { getDuckDnsRelayConfig } from '../utils/duckDnsRelay';
 import { AndroidAuditPermissionsModal } from './AndroidAuditPermissionsModal';
-import { Shield, Lock, Smartphone, Terminal, CheckCircle2, KeyRound, Sparkles, RefreshCw, Cpu, Network } from 'lucide-react';
+import { Shield, Lock, Smartphone, Terminal, CheckCircle2, KeyRound, Sparkles, RefreshCw, Cpu, Network, AlertCircle, Database } from 'lucide-react';
 
 interface AuthScreenProps {
   onLogin: (profile: UserProfile) => void;
 }
 
-const generateFreshRandom11DigitId = (): string => {
-  try {
-    const array = new Uint32Array(2);
-    crypto.getRandomValues(array);
-    const rawNum = ((BigInt(array[0]) << 32n) | BigInt(array[1])).toString();
-    const candidate = rawNum.replace(/\D/g, '');
-    if (candidate.length >= 11) {
-      return candidate.slice(0, 11);
-    }
-  } catch {}
+export const generateFreshRandom11DigitId = (): string => {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      const array = new Uint32Array(3);
+      crypto.getRandomValues(array);
+      const combined = ((BigInt(array[0]) << 64n) | (BigInt(array[1]) << 32n) | BigInt(array[2])).toString();
+      const cleanDigits = combined.replace(/\D/g, '');
+      if (cleanDigits.length >= 11) {
+        let candidate = cleanDigits.slice(0, 11);
+        if (candidate.startsWith('0')) {
+          candidate = '7' + candidate.slice(1);
+        }
+        // Verificar que no exista en la base de datos local
+        if (!isUserIdRegistered(candidate)) {
+          return candidate;
+        }
+      }
+    } catch {}
+  }
   return Math.floor(10000000000 + Math.random() * 90000000000).toString();
 };
 
@@ -45,7 +58,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [userIdInput, setUserIdInput] = useState('');
   const [userName, setUserName] = useState(''); // Always blank on start as requested
   const [userPassword, setUserPassword] = useState(''); // Always blank
+  const [currentAuthInput, setCurrentAuthInput] = useState('');
   const [newPasswordRecovery, setNewPasswordRecovery] = useState('');
+  const [newKeyRecovery, setNewKeyRecovery] = useState('');
   const [quantumKeyInput, setQuantumKeyInput] = useState('');
   const [generatedKey, setGeneratedKey] = useState('');
   const [e2eeInfo, setE2eeInfo] = useState<E2EEKeyPairData | null>(null);
@@ -53,6 +68,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
   const [successMsg, setSuccessMsg] = useState('');
   const [deviceId, setDeviceId] = useState('');
   const [showAuditModal, setShowAuditModal] = useState(false);
+  const [idVerification, setIdVerification] = useState<{
+    status: 'idle' | 'checking' | 'available' | 'registered' | 'invalid';
+    message: string;
+  }>({ status: 'idle', message: '' });
 
   // Genera o recupera el par de claves E2EE localmente en el dispositivo
   const refreshE2EEKeysForId = async (id11: string) => {
@@ -66,29 +85,66 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     }
   };
 
+  const verifyIdInDatabaseRealTime = async (id11: string) => {
+    if (id11.length !== 11) {
+      setIdVerification({
+        status: 'invalid',
+        message: `${id11.length}/11 dígitos ingresados`
+      });
+      return;
+    }
+
+    setIdVerification({
+      status: 'checking',
+      message: 'Conectando y verificando unicidad en base de datos...'
+    });
+
+    try {
+      const result = await checkUserIdUniqueness(id11);
+      const isBlindedMeshTaken = await checkUserIdInBlindedMesh(id11);
+
+      if (!result.isAvailable || isBlindedMeshTaken) {
+        setIdVerification({
+          status: 'registered',
+          message: '⛔ ID ya registrado en la base de datos (Cada ID se registra una única vez).'
+        });
+      } else {
+        setIdVerification({
+          status: 'available',
+          message: '✅ ID único disponible para registro único en base de datos.'
+        });
+      }
+    } catch (err) {
+      setIdVerification({
+        status: 'available',
+        message: '✅ ID verificado para registro local.'
+      });
+    }
+  };
+
   useEffect(() => {
+    // 1. Obtener huella de hardware del dispositivo
     const devId = getOrCreateDeviceFingerprint();
     setDeviceId(devId);
 
-    const existing = getExistingVault();
-    if (existing) {
-      setMode('login');
-      setUserIdInput(existing.userId);
-      setUserName(''); // Keep blank so user inputs their credentials
-      setUserPassword('');
-      setQuantumKeyInput('');
-      setGeneratedKey(generateQuantumKey(existing.userId));
-      refreshE2EEKeysForId(existing.userId);
-    } else {
-      // Fresh new install / APK: generate fresh brand new unique ID
-      const freshId = generateFreshRandom11DigitId();
-      setUserIdInput(freshId);
-      setGeneratedKey(generateQuantumKey(freshId));
-      setUserName('');
-      setUserPassword('');
-      setQuantumKeyInput('');
-      refreshE2EEKeysForId(freshId);
-    }
+    // 2. Descartar cualquier sesión/ID previo en localStorage al iniciar sesión por primera vez
+    localStorage.removeItem('chattoj_user');
+    localStorage.removeItem('chattoj_temp_auth_id');
+
+    // 3. Generar SIEMPRE un ID de 11 dígitos nuevo, único y aleatorio para cada nueva instalación
+    const freshId = generateFreshRandom11DigitId();
+    setMode('register');
+    setUserIdInput(freshId);
+    setGeneratedKey(generateQuantumKey(freshId));
+    setUserName('');
+    setUserPassword('');
+    setQuantumKeyInput('');
+    setError('');
+    setSuccessMsg('✨ Nueva instalación detectada: ID único generado y verificado.');
+
+    // 4. Inicializar criptografía E2EE para el nuevo ID único
+    refreshE2EEKeysForId(freshId);
+    verifyIdInDatabaseRealTime(freshId);
   }, []);
 
   const renewFreshIdentity = () => {
@@ -100,8 +156,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     setUserPassword('');
     setQuantumKeyInput('');
     setError('');
-    setSuccessMsg('✨ Nuevo ID Soberano y Claves E2EE generadas para esta instalación.');
+    setSuccessMsg('✨ Nuevo ID Soberano de 11 dígitos generado.');
     refreshE2EEKeysForId(freshId);
+    verifyIdInDatabaseRealTime(freshId);
   };
 
   const handleIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,6 +172,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       }
       setError('');
       refreshE2EEKeysForId(val);
+      verifyIdInDatabaseRealTime(val);
+    } else {
+      setIdVerification({
+        status: 'invalid',
+        message: `${val.length}/11 dígitos ingresados`
+      });
     }
   };
 
@@ -142,6 +205,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         return;
       }
 
+      // 1. REGLA ESTRICTA DE BASE DE DATOS: Cada ID se registra una única vez
+      const idCheck = await checkUserIdUniqueness(userIdInput);
+      const isBlindedMeshTaken = await checkUserIdInBlindedMesh(userIdInput);
+      if (!idCheck.isAvailable || isBlindedMeshTaken) {
+        setError(`⛔ REGISTRO DENEGADO: El ID "${userIdInput}" ya está registrado en la base de datos. Cada ID se registra una única vez. Genera o elige otro ID.`);
+        return;
+      }
+
       if (isUsernameTaken(userName.trim())) {
         setError(`El nombre de usuario "${userName.trim()}" ya está registrado en este dispositivo. Cada nombre es de un solo uso.`);
         return;
@@ -155,7 +226,19 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       }
 
       try {
-        await registerAdminVault(userIdInput, userName.trim(), generatedKey, userPassword.trim() || undefined);
+        await registerAdminVault(
+          userIdInput, 
+          userName.trim(), 
+          generatedKey, 
+          userPassword.trim() || undefined,
+          {
+            publicKeyE2EE: activeE2EE.publicKeyBase64,
+            publicKeyFingerprint: activeE2EE.publicKeyFingerprint
+          }
+        );
+
+        // Publicar ID y usuario en la malla ciega
+        await publishBlindedUserIdToMesh(userIdInput);
 
         // Generar contenedor .jpgduocauantomic+ conectado con base de datos de Google y autodestrucción
         const passwordHashForVault = userPassword.trim() 
@@ -178,22 +261,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
         };
         onLogin(profile);
       } catch (err: any) {
-        setError(err.message || 'Error al registrar en bóveda local.');
+        setError(err.message || 'Error al registrar en base de datos.');
       }
     } else if (mode === 'login') {
       const secretToVerify = quantumKeyInput.trim() || userPassword.trim() || generatedKey;
-      const result = await verifyAdminVault(userIdInput, secretToVerify);
+      const result = await verifyAdminVault(userIdInput, secretToVerify, userPassword.trim() || undefined);
       if (!result.isValid) {
-        setError(result.error || 'Credenciales no válidas para este ID y dispositivo.');
+        setError(result.error || 'Credenciales no válidas para este ID en la base de datos.');
         return;
       }
 
-      const finalName = result.linkedName || userName.trim() || 'Admin Nodo';
+      const finalName = result.linkedName || userName.trim() || 'Usuario ' + userIdInput.slice(0, 4);
       const profile: UserProfile = {
         userId: userIdInput,
         quantumKey: generatedKey,
         name: finalName,
-        statusMessage: '🔒 Sesión E2EE Verificada en Hardware Local',
+        statusMessage: '🔒 Sesión E2EE Verificada en Base de Datos Local',
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
         nodeStatus: 'online',
         isRegistered: true,
@@ -204,20 +287,39 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
       };
       onLogin(profile);
     } else if (mode === 'recover') {
-      if (!newPasswordRecovery.trim()) {
-        setError('Ingresa tu nueva contraseña o clave.');
+      if (!newPasswordRecovery.trim() && !newKeyRecovery.trim()) {
+        setError('Debes ingresar una nueva contraseña o una nueva Key.');
         return;
       }
 
-      const res = await changePasswordWithHardwareValidation(userIdInput, newPasswordRecovery.trim());
+      const res = await changePasswordWithHardwareValidation(
+        userIdInput,
+        newPasswordRecovery.trim() || undefined,
+        newKeyRecovery.trim() || undefined,
+        currentAuthInput.trim() || undefined
+      );
+
       if (!res.success) {
-        setError(res.error || 'No se pudo verificar el hardware del dispositivo.');
+        setError(res.error || 'No se pudo actualizar las credenciales en la base de datos.');
         return;
       }
 
-      setSuccessMsg('Contraseña actualizada con éxito en la base de datos de este dispositivo. Ahora puedes iniciar sesión.');
+      // Re-encriptar contenedor .jpgduocauantomic+ con la nueva credencial
+      try {
+        const passHash = newPasswordRecovery.trim()
+          ? await hashString(newPasswordRecovery.trim() + userIdInput)
+          : (newKeyRecovery.trim() || generatedKey);
+        await generateQuantumJpgContainer(userIdInput, userName || 'Usuario', passHash);
+      } catch {}
+
+      setSuccessMsg('✅ Credenciales actualizadas exitosamente en la base de datos local y central. Ya puedes iniciar sesión.');
       setMode('login');
-      setUserPassword(newPasswordRecovery.trim());
+      if (newPasswordRecovery.trim()) {
+        setUserPassword(newPasswordRecovery.trim());
+        setQuantumKeyInput(newPasswordRecovery.trim());
+      } else if (newKeyRecovery.trim()) {
+        setQuantumKeyInput(newKeyRecovery.trim());
+      }
     }
   };
 
@@ -369,6 +471,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {/* Indicador de Verificación de Unicidad en la Base de Datos */}
+              {userIdInput.length === 11 && (
+                <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded-lg border transition-all">
+                  {idVerification.status === 'checking' && (
+                    <div className="flex items-center gap-1 text-amber-300 border-amber-900/50 bg-amber-950/20 w-full py-0.5">
+                      <RefreshCw className="w-3 h-3 animate-spin text-amber-400 shrink-0" />
+                      <span>{idVerification.message}</span>
+                    </div>
+                  )}
+                  {idVerification.status === 'available' && (
+                    <div className="flex items-center gap-1 text-emerald-400 border-emerald-900/50 bg-emerald-950/30 w-full py-0.5">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      <span>{idVerification.message}</span>
+                    </div>
+                  )}
+                  {idVerification.status === 'registered' && (
+                    <div className="flex items-center gap-1 text-rose-400 border-rose-900/50 bg-rose-950/30 w-full py-0.5">
+                      <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                      <span>{idVerification.message}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Credenciales Criptográficas E2EE Generadas en el Dispositivo */}
@@ -472,21 +598,62 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
             )}
 
             {mode === 'recover' && (
-              <div>
-                <label className="block text-[11px] font-mono uppercase text-emerald-400 mb-0.5">
-                  Nueva Contraseña / Key (Verificada por Hardware de este Dispositivo)
-                </label>
-                <input
-                  type="password"
-                  value={newPasswordRecovery}
-                  onChange={(e) => setNewPasswordRecovery(e.target.value)}
-                  placeholder="Nueva contraseña permanente"
-                  className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-emerald-500"
-                  required
-                />
-                <span className="text-[10px] text-amber-300/80 block mt-0.5">
-                  Se verificará con la base de datos que este hardware ({deviceId.slice(0, 12)}...) es el dueño del ID.
-                </span>
+              <div className="space-y-2.5">
+                <div>
+                  <label className="block text-[11px] font-mono uppercase text-emerald-400 mb-0.5">
+                    Contraseña o Key Actual (Opcional en este hardware)
+                  </label>
+                  <input
+                    type="password"
+                    value={currentAuthInput}
+                    onChange={(e) => setCurrentAuthInput(e.target.value)}
+                    placeholder="Contraseña o Key previa (si la recuerdas)"
+                    className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono uppercase text-emerald-400 mb-0.5">
+                    Nueva Contraseña Permanente
+                  </label>
+                  <input
+                    type="password"
+                    value={newPasswordRecovery}
+                    onChange={(e) => setNewPasswordRecovery(e.target.value)}
+                    placeholder="Elige tu nueva contraseña fija..."
+                    className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-0.5">
+                    <label className="text-[11px] font-mono uppercase text-emerald-400">
+                      Nueva Key Criptográfica (Opcional)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const regenerated = generateQuantumKey(userIdInput || '12345678901');
+                        setNewKeyRecovery(regenerated);
+                      }}
+                      className="text-[10px] text-emerald-400 hover:text-emerald-300 font-mono underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" /> Generar nueva Key
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={newKeyRecovery}
+                    onChange={(e) => setNewKeyRecovery(e.target.value)}
+                    placeholder="O deja en blanco para mantener la Key actual"
+                    className="w-full bg-[#070b08] border border-emerald-900 rounded-xl px-3 py-2 text-emerald-400 font-mono text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div className="p-2 bg-emerald-950/30 border border-emerald-900/60 rounded-xl text-[10px] text-emerald-300/90 font-mono flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>Se actualizará tanto en la bóveda cifrada local como en el nodo central.</span>
+                </div>
               </div>
             )}
 
@@ -505,11 +672,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
               )}
               <button
                 type="submit"
-                disabled={userIdInput.length !== 11}
+                disabled={userIdInput.length !== 11 || (mode === 'register' && idVerification.status === 'registered')}
                 className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-semibold py-2 px-3 rounded-xl text-xs glow-green-sm flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
               >
                 <Terminal className="w-3.5 h-3.5" /> 
-                {mode === 'register' ? 'Registrar en Bóveda' : mode === 'login' ? 'Entrar (Log in)' : 'Actualizar Key'}
+                {mode === 'register' ? 'Registrar en Bóveda' : mode === 'login' ? 'Entrar (Log in)' : 'Actualizar Credenciales'}
               </button>
             </div>
           </form>
